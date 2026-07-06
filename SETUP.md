@@ -107,6 +107,16 @@ correctly over multiple polling cycles.
 
 ## Phase 4 — Dry run
 
+Start with a single fetch cycle that skips Discord and trading entirely —
+it verifies the government data sources, detail parsing, and database work
+before you wire up the bot:
+
+```powershell
+python -m src.main --once
+```
+
+Then run the full bot:
+
 ```powershell
 python -m src.main
 ```

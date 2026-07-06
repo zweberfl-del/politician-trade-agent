@@ -1,23 +1,26 @@
 # Politician Trade Agent
 
-A Discord bot that tracks US congressional stock trades in real time and optionally mirrors them through a brokerage account.
+A Discord bot that tracks US congressional stock trades and optionally mirrors them through a brokerage account.
 
 ## Features
 
-- Polls public disclosure sources (House Clerk, Senate EFD, Finnhub) for new politician trades
-- Posts real-time trade alerts to a Discord channel
+- Polls official disclosure sources (House Clerk, Senate EFD) and parses **per-trade detail** — ticker, buy/sell, dates, amount range, owner — from e-filed PTRs (Senate HTML pages, House PDFs)
+- Posts trade alerts to a Discord channel, with party/state tags and disclosure-lag stats
+- Configurable alert filters: minimum amount, ticker watchlist, party
 - Follow specific politicians and receive DM notifications when they trade
-- View the most-traded tickers across Congress
+- Politician profiles (`/politician`), most-traded tickers (`/top`), and a copy-trade leaderboard ranking politicians by return since disclosure vs SPY (`/leaderboard`)
+- Party/state/committee enrichment from the free [congress-legislators](https://github.com/unitedstates/congress-legislators) dataset, plus name autocomplete in commands
+- Optional weekly digest post (most-traded tickers, most active politicians)
 - Optional auto-trading: mirror politician trades through Alpaca (paper or live)
-- SQLite storage with full deduplication -- no duplicate alerts or orders
-- Configurable polling interval, trade amount, and sell-mirroring
+- SQLite storage with full deduplication — no duplicate alerts or orders; first run backfills history silently instead of flooding the channel
+- HTTP retries with backoff and an ETag-aware disk cache for the House disclosure ZIP
 
 ## Prerequisites
 
 - Python 3.11+
 - A Discord bot token (see [Discord Bot Setup](#discord-bot-setup) below)
 - (Optional) An [Alpaca](https://alpaca.markets/) account for auto-trading
-- (Optional) A [Finnhub](https://finnhub.io/) API key for enriched trade data
+- (Optional) A **paid** [Finnhub](https://finnhub.io/) plan for the congressional-trading API (the free tier cannot access this endpoint; the bot works fine without it)
 
 ## Quick Start
 
@@ -37,6 +40,9 @@ cp .env.example .env
 
 # Run the bot
 python -m src.main
+
+# Or run a single fetch+store cycle without Discord (smoke test / cron)
+python -m src.main --once
 ```
 
 ## Discord Bot Setup
@@ -58,6 +64,8 @@ python -m src.main
 |---|---|
 | `/trades [politician] [ticker]` | Show recent politician stock trades, optionally filtered |
 | `/top [days]` | Show the most-traded tickers by politicians (default: 30 days) |
+| `/politician <name>` | Profile: totals, top tickers, committees, recent trades |
+| `/leaderboard [days]` | Rank politicians by avg return since disclosure vs SPY |
 | `/follow <politician>` | Get DM alerts when a politician discloses a new trade |
 | `/unfollow <politician>` | Stop receiving DM alerts for a politician |
 | `/following` | List the politicians you are currently following |
@@ -71,15 +79,24 @@ All configuration is done through environment variables (or a `.env` file).
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DISCORD_BOT_TOKEN` | Yes | -- | Discord bot token |
-| `ALERT_CHANNEL_ID` | Yes | -- | Discord channel ID for trade alerts |
+| `ALERT_CHANNEL_ID` | Yes | -- | Numeric Discord channel ID for trade alerts |
 | `ENABLE_ALERTS` | No | `true` | Enable posting trade alerts |
 | `ENABLE_AUTO_TRADE` | No | `false` | Enable automatic trade mirroring |
 | `ENABLE_SELL_MIRROR` | No | `false` | Mirror sell trades (buys only by default) |
 | `PAPER_TRADING` | No | `true` | Use Alpaca paper trading endpoint |
+| `ENABLE_WEEKLY_DIGEST` | No | `false` | Post a weekly trading digest to the alert channel |
 | `POLL_INTERVAL_MINUTES` | No | `30` | How often to poll for new trades |
+| `BACKFILL_SILENT` | No | `true` | First run (empty DB) ingests history without alerts/orders |
+| `PARSE_FILING_DETAILS` | No | `true` | Fetch per-trade detail from PTR pages/PDFs |
+| `MAX_FILINGS_PER_CYCLE` | No | `25` | Max new filings detail-fetched per source per cycle |
+| `ENABLE_ENRICHMENT` | No | `true` | Party/state/committee enrichment (weekly refresh) |
+| `ALERT_MIN_AMOUNT_USD` | No | `0` | Suppress channel alerts below this disclosed amount |
+| `ALERT_TICKER_WATCHLIST` | No | -- | Comma-separated tickers to alert on (empty = all) |
+| `ALERT_PARTY_FILTER` | No | -- | Comma-separated party codes D,R,I (empty = all) |
 | `TRADE_AMOUNT_USD` | No | `500` | Dollar amount per mirrored trade |
-| `FINNHUB_API_KEY` | No | -- | Finnhub API key for enriched trade data |
+| `FINNHUB_API_KEY` | No | -- | Finnhub API key (paid plan required for this endpoint) |
 | `DATABASE_PATH` | No | `trades.db` | Path to the SQLite database file |
+| `CACHE_DIR` | No | `.cache` | Directory for cached downloads (empty disables) |
 | `ALPACA_API_KEY` | No | -- | Alpaca API key (required if auto-trade is on) |
 | `ALPACA_SECRET_KEY` | No | -- | Alpaca secret key |
 | `ALPACA_BASE_URL` | No | `https://paper-api.alpaca.markets` | Alpaca API base URL |
@@ -88,11 +105,14 @@ All configuration is done through environment variables (or a `.env` file).
 
 Trade data is aggregated from multiple public sources:
 
-- **House Clerk Financial Disclosures** -- Official XML index of House representative periodic transaction reports. Provides filing metadata (filer, date, document ID, PDF link). Updated as filings are submitted.
-- **Senate Electronic Financial Disclosure (EFD)** -- The Senate's searchable disclosure system. The bot queries for recent periodic transaction reports and extracts filer information.
-- **Finnhub Congressional Trading API** (optional) -- Provides structured trade details (ticker, amount, buy/sell) for a curated list of commonly-traded tickers. Requires a free API key.
+- **House Clerk Financial Disclosures** — Official XML index of House periodic transaction reports. E-filed PTR PDFs are downloaded and parsed for per-trade detail (ticker, type, dates, amount). Scanned paper filings fall back to a metadata-only alert with a link to the PDF.
+- **Senate Electronic Financial Disclosure (EFD)** — The Senate's disclosure system. The bot accepts the EFD access agreement, searches recent PTRs, and parses each e-filed report's transaction table for full detail.
+- **Finnhub Congressional Trading API** (optional, paid) — Structured trade data for a curated list of commonly-traded tickers. Cross-source duplicates collapse via content-based trade IDs.
 
-The bot merges results from all enabled sources and deduplicates by a deterministic trade ID before storing them in the database.
+Note on latency: the STOCK Act allows members up to 30–45 days to disclose a
+trade, so *every* congressional trade tracker (including commercial ones) is
+reporting trades days-to-weeks after they happened. Alerts include the
+disclosure lag so you can judge staleness at a glance.
 
 ## Trading Setup (Optional)
 
@@ -113,6 +133,15 @@ Install the trading extras:
 ```bash
 pip install -e ".[trading]"
 ```
+
+## Deployment
+
+- **Docker**: `docker build -t politician-trade-agent .` then run with your
+  `.env` (`docker run --env-file .env -v pta-data:/data politician-trade-agent`).
+- **systemd**: see `deploy/politician-trade-agent.service`.
+
+Whichever host you pick, `.env` holds real secrets — never commit it, and
+prefer the host's secret/env-var mechanism over a file on disk.
 
 ## License
 
