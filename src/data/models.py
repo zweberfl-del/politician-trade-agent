@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -23,7 +23,10 @@ class TransactionType(str, Enum):
         normalized = raw.strip().lower()
         if normalized in ("purchase", "buy", "p"):
             return cls.PURCHASE
-        if normalized in ("sale", "sell", "s", "sale (full)", "sale (partial)"):
+        if normalized in (
+            "sale", "sell", "s", "sale (full)", "sale (partial)",
+            "s (full)", "s (partial)",
+        ):
             return cls.SALE
         if normalized in ("exchange", "e"):
             return cls.EXCHANGE
@@ -59,7 +62,22 @@ class PoliticianTrade(BaseModel):
 
     @property
     def trade_id(self) -> str:
-        """Generate a deterministic ID for deduplication."""
+        """Generate a deterministic ID for deduplication.
+
+        Trades with real detail (a ticker or a transaction date) dedupe on
+        their content so the same trade reported by two sources collapses
+        into one row. Metadata-only filings (no ticker, no date, no amount)
+        would all produce the same key per politician, so they fall back to
+        the source document ID to stay distinct.
+        """
+        has_detail = bool(
+            self.ticker.strip() or self.transaction_date or self.amount_range.strip()
+        )
+        if not has_detail and self.source_id:
+            return "|".join(
+                [self.politician_name.lower().strip(), self.source, self.source_id]
+            )
+
         parts = [
             self.politician_name.lower().strip(),
             self.ticker.upper().strip(),

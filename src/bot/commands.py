@@ -13,18 +13,36 @@ from src.storage.database import (
     follow_politician,
     unfollow_politician,
     get_followed_politicians,
+    get_politician_stats,
+    get_purchases_since,
+    search_politician_names,
 )
 from src.bot.embeds import (
     trades_list_embed,
     top_tickers_embed,
     portfolio_embed,
     settings_embed,
+    politician_profile_embed,
+    leaderboard_embed,
 )
 
 if TYPE_CHECKING:
+    from src.data.enrichment import EnrichmentService
     from src.trading.base import Broker
 
 log = logging.getLogger(__name__)
+
+
+async def _politician_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Suggest politician names already seen in the trades table."""
+    try:
+        names = await search_politician_names(settings.database_path, current)
+    except Exception:
+        log.debug("Autocomplete lookup failed", exc_info=True)
+        return []
+    return [app_commands.Choice(name=n, value=n) for n in names[:25]]
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +54,7 @@ async def setup_commands(
     bot: discord.Client,
     tree: app_commands.CommandTree,
     broker: Broker | None = None,
+    enrichment: EnrichmentService | None = None,
 ) -> None:
     """Register all slash commands on the given command tree.
 
@@ -47,6 +66,8 @@ async def setup_commands(
         The ``CommandTree`` to register commands on.
     broker:
         An optional broker instance used by the ``/portfolio`` command.
+    enrichment:
+        Optional politician-metadata service used by ``/politician``.
     """
 
     # -- /trades [politician] [ticker] ------------------------------------
@@ -56,6 +77,7 @@ async def setup_commands(
         politician="Filter by politician name",
         ticker="Filter by stock ticker",
     )
+    @app_commands.autocomplete(politician=_politician_autocomplete)
     async def trades_cmd(
         interaction: discord.Interaction,
         politician: str | None = None,
@@ -104,6 +126,7 @@ async def setup_commands(
         description="Get DM alerts when a politician makes a trade",
     )
     @app_commands.describe(politician="Name of the politician to follow")
+    @app_commands.autocomplete(politician=_politician_autocomplete)
     async def follow_cmd(
         interaction: discord.Interaction,
         politician: str,
@@ -128,6 +151,7 @@ async def setup_commands(
         description="Stop receiving DM alerts for a politician",
     )
     @app_commands.describe(politician="Name of the politician to unfollow")
+    @app_commands.autocomplete(politician=_politician_autocomplete)
     async def unfollow_cmd(
         interaction: discord.Interaction,
         politician: str,
@@ -171,6 +195,64 @@ async def setup_commands(
             f"**Politicians you follow:**\n{listing}",
             ephemeral=True,
         )
+
+    # -- /politician <name> -------------------------------------------------
+
+    @tree.command(
+        name="politician",
+        description="Profile of a politician's disclosed trading",
+    )
+    @app_commands.describe(name="Politician to look up")
+    @app_commands.autocomplete(name=_politician_autocomplete)
+    async def politician_cmd(interaction: discord.Interaction, name: str) -> None:
+        await interaction.response.defer()
+
+        stats = await get_politician_stats(settings.database_path, name)
+        if not (stats.get("total") or 0):
+            await interaction.followup.send(
+                f"No disclosed trades on record for **{name}**.", ephemeral=True
+            )
+            return
+
+        recent = await get_recent_trades(settings.database_path, limit=5, politician=name)
+        info = enrichment.lookup(name) if enrichment is not None else None
+        await interaction.followup.send(
+            embed=politician_profile_embed(name, stats, recent, info)
+        )
+
+    # -- /leaderboard [days] --------------------------------------------------
+
+    @tree.command(
+        name="leaderboard",
+        description="Politicians ranked by return since disclosure vs SPY",
+    )
+    @app_commands.describe(days="Look-back window in days (default: 180)")
+    async def leaderboard_cmd(interaction: discord.Interaction, days: int = 180) -> None:
+        from src.data.prices import (
+            PriceService,
+            compute_performance,
+            leaderboard_from_performance,
+        )
+
+        await interaction.response.defer()
+        days = max(7, min(days, 365))
+
+        try:
+            purchases = await get_purchases_since(settings.database_path, days=days)
+            performance = await compute_performance(
+                PriceService(settings.database_path), purchases
+            )
+            board = leaderboard_from_performance(performance)
+        except Exception:
+            log.exception("Leaderboard computation failed")
+            await interaction.followup.send(
+                "Could not compute the leaderboard (price data unavailable). "
+                "Try again later.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(embed=leaderboard_embed(board, days))
 
     # -- /settings --------------------------------------------------------
 

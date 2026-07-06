@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -19,9 +20,46 @@ def setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+async def run_once() -> None:
+    """Fetch + store one cycle without Discord or trading (smoke test / cron)."""
+    from src.config import settings
+    from src.data.enrichment import EnrichmentService
+    from src.data.fetcher import build_default_fetcher
+    from src.storage.database import get_known_source_ids, insert_trades
+    from src.storage.migrations import run_migrations
+
+    await run_migrations(settings.database_path)
+    fetcher = build_default_fetcher()
+
+    if settings.enable_enrichment:
+        enrichment = EnrichmentService(settings.database_path)
+        await enrichment.ensure_fresh()
+    else:
+        enrichment = None
+
+    known_ids = await get_known_source_ids(settings.database_path)
+    trades = await fetcher.fetch_all_trades(known_ids)
+    if enrichment is not None:
+        for trade in trades:
+            enrichment.enrich(trade)
+    new_trades = await insert_trades(settings.database_path, trades)
+
+    log.info("--once complete: fetched=%d new=%d", len(trades), len(new_trades))
+    for trade in new_trades[:20]:
+        log.info(
+            "  NEW %s | %s | %s | %s | %s",
+            trade.politician_name,
+            trade.ticker or "(no ticker)",
+            trade.transaction_type.value,
+            trade.amount_range or "(no amount)",
+            trade.filing_date,
+        )
+
+
 async def run():
     from src.config import settings
     from src.storage.migrations import run_migrations
+    from src.data.enrichment import EnrichmentService
     from src.data.fetcher import build_default_fetcher
     from src.bot.bot import TradeBot
     from src.data.poller import Poller
@@ -46,19 +84,25 @@ async def run():
         except Exception:
             log.exception("Failed to initialize broker — auto-trading disabled")
 
-    # 4. Create bot (pass broker so /portfolio command has access)
-    bot = TradeBot(broker=broker)
+    # 4. Politician metadata enrichment (party/state/committees)
+    enrichment = (
+        EnrichmentService(settings.database_path) if settings.enable_enrichment else None
+    )
 
-    # 5. Create poller
+    # 5. Create bot (broker for /portfolio, enrichment for /politician)
+    bot = TradeBot(broker=broker, enrichment=enrichment)
+
+    # 6. Create poller
     poller = Poller(
         fetcher=fetcher,
         bot=bot,
         executor=executor,
+        enrichment=enrichment,
         db_path=settings.database_path,
         interval_minutes=settings.poll_interval_minutes,
     )
 
-    # 6. Start poller when bot is ready
+    # 7. Start poller when bot is ready
     original_on_ready = bot.on_ready
 
     async def on_ready_with_poller():
@@ -67,12 +111,12 @@ async def run():
 
     bot.on_ready = on_ready_with_poller
 
-    # 7. Validate config
+    # 8. Validate config
     if not settings.discord_bot_token:
         log.error("DISCORD_BOT_TOKEN is required. Set it in .env")
         sys.exit(1)
 
-    # 8. Run the bot (blocks until shutdown)
+    # 9. Run the bot (blocks until shutdown)
     log.info("Starting bot...")
     try:
         await bot.start(settings.discord_bot_token)
@@ -84,9 +128,17 @@ async def run():
 
 
 def main():
+    parser = argparse.ArgumentParser(prog="politician-trade-agent")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single fetch+store cycle without Discord or trading, then exit",
+    )
+    args = parser.parse_args()
+
     setup_logging()
     try:
-        asyncio.run(run())
+        asyncio.run(run_once() if args.once else run())
     except KeyboardInterrupt:
         pass
 

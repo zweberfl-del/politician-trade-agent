@@ -42,7 +42,23 @@ def _make_order(ticker: str = "AAPL", side: str = "buy") -> OrderResult:
 
 
 class MockBroker(Broker):
-    """A broker that records calls and returns canned results."""
+    """A broker that records calls and returns canned results.
+
+    The class-level methods satisfy the ``Broker`` ABC; ``__init__`` then
+    shadows them with per-instance ``AsyncMock``s so tests can assert calls.
+    """
+
+    async def buy(self, ticker: str, amount_usd: float) -> OrderResult:
+        raise NotImplementedError
+
+    async def sell(self, ticker: str, amount_usd: float) -> OrderResult:
+        raise NotImplementedError
+
+    async def get_positions(self):
+        raise NotImplementedError
+
+    async def get_account(self):
+        raise NotImplementedError
 
     def __init__(self) -> None:
         self.buy = AsyncMock(return_value=_make_order("AAPL", "buy"))

@@ -46,7 +46,11 @@ def _format_date(d: date | None) -> str:
 def trade_alert_embed(trade: PoliticianTrade) -> discord.Embed:
     """Build a rich embed for a single politician trade alert."""
 
-    title = f"{trade.politician_name} \u2014 {trade.transaction_type.value.upper()}"
+    who = trade.politician_name
+    tags = "/".join(t for t in (trade.party, trade.state) if t)
+    if tags:
+        who = f"{who} ({tags})"
+    title = f"{who} \u2014 {trade.transaction_type.value.upper()}"
     color = _transaction_color(trade.transaction_type)
 
     embed = discord.Embed(title=title, color=color)
@@ -67,12 +71,16 @@ def trade_alert_embed(trade: PoliticianTrade) -> discord.Embed:
     chamber_label = "House" if trade.chamber == Chamber.HOUSE else "Senate"
     embed.add_field(name="Chamber", value=chamber_label, inline=True)
 
-    # Footer: source + optional filing date
+    # Footer: source + filing date + disclosure lag
     footer_parts: list[str] = []
     if trade.source:
         footer_parts.append(f"Source: {trade.source}")
     if trade.filing_date is not None:
         footer_parts.append(f"Filed: {_format_date(trade.filing_date)}")
+        if trade.transaction_date is not None:
+            lag = (trade.filing_date - trade.transaction_date).days
+            if lag > 0:
+                footer_parts.append(f"{lag} days after the trade")
     if footer_parts:
         embed.set_footer(text=" | ".join(footer_parts))
 
@@ -189,6 +197,134 @@ def portfolio_embed(
             )
         embed.description = "\n".join(lines)
 
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# Politician profile embed
+# ---------------------------------------------------------------------------
+
+
+def politician_profile_embed(
+    name: str,
+    stats: dict,
+    recent_trades: list[dict],
+    info: dict | None = None,
+) -> discord.Embed:
+    """Profile card for one politician: identity, totals, top tickers, recent trades.
+
+    *stats* comes from ``get_politician_stats()``; *info* (optional) from the
+    enrichment dataset with keys party/state/chamber/committees/full_name.
+    """
+    display = (info or {}).get("full_name") or name
+    tags = "/".join(
+        t for t in ((info or {}).get("party", ""), (info or {}).get("state", "")) if t
+    )
+    title = f"{display} ({tags})" if tags else display
+
+    embed = discord.Embed(title=title, color=_COLOR_BLUE)
+
+    total = stats.get("total") or 0
+    embed.add_field(name="Disclosed Trades", value=str(total), inline=True)
+    embed.add_field(
+        name="Buys / Sells",
+        value=f"{stats.get('buys') or 0} / {stats.get('sells') or 0}",
+        inline=True,
+    )
+    embed.add_field(name="Distinct Tickers", value=str(stats.get("tickers") or 0), inline=True)
+
+    top = stats.get("top_tickers") or []
+    if top:
+        lines = [
+            f"**{t['ticker']}** — {t['trade_count']} ({t['buys']}B/{t['sells']}S)"
+            for t in top
+        ]
+        embed.add_field(name="Most Traded", value="\n".join(lines), inline=False)
+
+    committees = (info or {}).get("committees") or []
+    if committees:
+        embed.add_field(
+            name="Committees", value="\n".join(f"• {c}" for c in committees[:5]), inline=False
+        )
+
+    if recent_trades:
+        lines = []
+        for t in recent_trades[:5]:
+            ticker = t.get("ticker") or "N/A"
+            tx_type = (t.get("transaction_type") or "unknown").upper()
+            amount = t.get("amount_range") or "Unknown"
+            tx_date = t.get("transaction_date") or t.get("filing_date") or "N/A"
+            lines.append(f"{tx_date} | {ticker} | {tx_type} | {amount}")
+        embed.add_field(name="Recent Trades", value="\n".join(lines), inline=False)
+
+    if stats.get("first_date"):
+        embed.set_footer(text=f"Records from {stats['first_date']} to {stats.get('last_date')}")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# Leaderboard embed
+# ---------------------------------------------------------------------------
+
+
+def leaderboard_embed(board: list[dict], days: int) -> discord.Embed:
+    """Politicians ranked by average excess return vs SPY since disclosure."""
+    embed = discord.Embed(
+        title=f"Copy-Trade Leaderboard — Purchases, Last {days} Days",
+        description=(
+            "Average return since each purchase was *disclosed* (what a mirror "
+            "could capture), versus SPY over the same window."
+        ),
+        color=_COLOR_GOLD,
+    )
+    if not board:
+        embed.description = (
+            "Not enough purchase data with resolvable prices yet. "
+            "Try again after more disclosures are ingested."
+        )
+        return embed
+
+    lines = []
+    for idx, row in enumerate(board, start=1):
+        lines.append(
+            f"{idx}. **{row['politician_name']}** — "
+            f"{row['avg_return_pct']:+.1f}% avg "
+            f"({row['avg_excess_pct']:+.1f}% vs SPY, {row['trades']} buys)"
+        )
+    embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# Weekly digest embed
+# ---------------------------------------------------------------------------
+
+
+def weekly_digest_embed(
+    top_tickers: list[dict],
+    most_active: list[dict],
+) -> discord.Embed:
+    """Weekly summary: hottest tickers and most active traders."""
+    embed = discord.Embed(title="Weekly Congressional Trading Digest", color=_COLOR_PURPLE)
+
+    if top_tickers:
+        lines = [
+            f"**{t['ticker']}** — {t['trade_count']} trades "
+            f"({t['buys']}B/{t['sells']}S) by {t['politician_count']} politicians"
+            for t in top_tickers[:8]
+        ]
+        embed.add_field(name="Most Traded Tickers", value="\n".join(lines), inline=False)
+
+    if most_active:
+        lines = [
+            f"**{p['politician_name']}** — {p['trade_count']} trades "
+            f"({p['buys']}B/{p['sells']}S)"
+            for p in most_active[:8]
+        ]
+        embed.add_field(name="Most Active Politicians", value="\n".join(lines), inline=False)
+
+    if not top_tickers and not most_active:
+        embed.description = "No congressional trading activity recorded this week."
     return embed
 
 

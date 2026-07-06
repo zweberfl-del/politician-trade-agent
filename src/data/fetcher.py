@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import time
 import xml.etree.ElementTree as ET
@@ -9,13 +10,23 @@ import zipfile
 from abc import ABC, abstractmethod
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
+from pathlib import Path
 
 import httpx
 
 from src.config import settings
-from src.data.models import Chamber, Filing, PoliticianTrade, TransactionType
+from src.data.http_util import request_with_retry
+from src.data.models import Chamber, PoliticianTrade, TransactionType
+from src.data.parsers import parse_house_ptr_text, parse_senate_ptr_html
 
 logger = logging.getLogger(__name__)
+
+try:
+    import pdfplumber
+
+    _PDFPLUMBER_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on install extras
+    _PDFPLUMBER_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -25,26 +36,35 @@ logger = logging.getLogger(__name__)
 class DataSource(ABC):
     """Interface that every trade-data provider must implement."""
 
+    #: matches PoliticianTrade.source for rows produced by this source
+    name: str = ""
+
     @abstractmethod
-    async def fetch_trades(self) -> list[PoliticianTrade]:
-        """Return all recently-disclosed trades from this source."""
+    async def fetch_trades(self, known_ids: set[str] | None = None) -> list[PoliticianTrade]:
+        """Return recently-disclosed trades.
+
+        ``known_ids`` contains source_ids of filings already ingested;
+        sources skip those entirely (no detail re-fetch, no duplicate rows).
+        """
         ...
 
 
 # ---------------------------------------------------------------------------
-# House Clerk XML feed
+# House Clerk XML feed + PTR PDFs
 # ---------------------------------------------------------------------------
 
 
 class HouseClerkSource(DataSource):
     """
     Fetches House representative trade filings from the official House Clerk
-    Financial Disclosure XML index.
+    Financial Disclosure XML index, then extracts per-trade detail (ticker,
+    type, dates, amount) from the e-filed PTR PDFs.
 
-    The XML only provides filing metadata (filer name, date, doc-ID).
-    Individual trade details (ticker, amount, buy/sell) are inside the PDF
-    and are *not* parsed in this version.
+    Paper filings (scanned images) and PDFs that fail parsing fall back to a
+    metadata-only row so the filing is still surfaced and deduplicated.
     """
+
+    name = "house_clerk"
 
     BASE_URL = "https://disclosures-clerk.house.gov"
     ZIP_URL = BASE_URL + "/public_disc/financial-pdfs/{year}FD.zip"
@@ -53,27 +73,45 @@ class HouseClerkSource(DataSource):
     def __init__(self, *, lookback_days: int = 90) -> None:
         self.lookback_days = lookback_days
 
-        # Simple in-memory cache: (year -> (fetched_at, raw_bytes))
+        # In-memory cache: (year -> (fetched_at, raw_bytes)); a disk cache in
+        # settings.cache_dir persists across restarts and enables ETag 304s.
         self._zip_cache: dict[int, tuple[float, bytes]] = {}
         self._cache_ttl = 3600  # 1 hour
 
     # -- public API ----------------------------------------------------------
 
-    async def fetch_trades(self) -> list[PoliticianTrade]:
+    async def fetch_trades(self, known_ids: set[str] | None = None) -> list[PoliticianTrade]:
+        known_ids = known_ids or set()
         cutoff = date.today() - timedelta(days=self.lookback_days)
         years = _years_in_range(cutoff, date.today())
 
-        trades: list[PoliticianTrade] = []
+        filings: list[dict] = []
         async with httpx.AsyncClient(timeout=60.0) as client:
             for year in years:
                 try:
                     raw = await self._download_zip(client, year)
-                    trades.extend(self._parse_zip(raw, year, cutoff))
+                    filings.extend(self._parse_zip(raw, year, cutoff))
                 except Exception:
                     logger.warning(
                         "HouseClerkSource: failed to process year %d", year, exc_info=True
                     )
-        return trades
+
+            new_filings = [f for f in filings if f["doc_id"] not in known_ids]
+            new_filings.sort(key=lambda f: f["filing_date"], reverse=True)
+
+            if not settings.parse_filing_details:
+                return [self._metadata_trade(f) for f in new_filings]
+
+            budget = settings.max_filings_per_cycle
+            trades: list[PoliticianTrade] = []
+            for filing in new_filings[:budget]:
+                trades.extend(await self._filing_to_trades(client, filing))
+            skipped = len(new_filings) - min(budget, len(new_filings))
+            if skipped:
+                logger.info(
+                    "HouseClerkSource: %d new filings deferred to later cycles", skipped
+                )
+            return trades
 
     # -- internals -----------------------------------------------------------
 
@@ -85,17 +123,57 @@ class HouseClerkSource(DataSource):
                 return data
 
         url = self.ZIP_URL.format(year=year)
-        logger.info("HouseClerkSource: downloading %s", url)
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.content
+        zip_path, meta_path = self._disk_cache_paths(year)
+
+        headers: dict[str, str] = {}
+        if zip_path is not None and zip_path.exists() and meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                if meta.get("etag"):
+                    headers["If-None-Match"] = meta["etag"]
+                if meta.get("last_modified"):
+                    headers["If-Modified-Since"] = meta["last_modified"]
+            except Exception:
+                logger.debug("HouseClerkSource: unreadable cache meta", exc_info=True)
+
+        logger.info("HouseClerkSource: checking %s", url)
+        resp = await request_with_retry(client, "GET", url, headers=headers)
+
+        if resp.status_code == 304 and zip_path is not None and zip_path.exists():
+            logger.info("HouseClerkSource: %dFD.zip unchanged (304), using disk cache", year)
+            data = zip_path.read_bytes()
+        else:
+            resp.raise_for_status()
+            data = resp.content
+            if zip_path is not None:
+                try:
+                    zip_path.write_bytes(data)
+                    meta_path.write_text(
+                        json.dumps(
+                            {
+                                "etag": resp.headers.get("ETag", ""),
+                                "last_modified": resp.headers.get("Last-Modified", ""),
+                            }
+                        )
+                    )
+                except OSError:
+                    logger.debug("HouseClerkSource: could not write disk cache", exc_info=True)
+
         self._zip_cache[year] = (time.monotonic(), data)
         return data
 
-    def _parse_zip(
-        self, raw: bytes, year: int, cutoff: date
-    ) -> list[PoliticianTrade]:
-        trades: list[PoliticianTrade] = []
+    def _disk_cache_paths(self, year: int) -> tuple[Path | None, Path | None]:
+        if not settings.cache_dir:
+            return None, None
+        cache_dir = Path(settings.cache_dir)
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None, None
+        return cache_dir / f"{year}FD.zip", cache_dir / f"{year}FD.zip.meta"
+
+    def _parse_zip(self, raw: bytes, year: int, cutoff: date) -> list[dict]:
+        filings: list[dict] = []
         buf = io.BytesIO(raw)
         with zipfile.ZipFile(buf) as zf:
             xml_name = f"{year}FD.xml"
@@ -107,7 +185,7 @@ class HouseClerkSource(DataSource):
                     xml_name,
                     zf.namelist(),
                 )
-                return trades
+                return filings
 
             with zf.open(matched[0]) as xf:
                 tree = ET.parse(xf)
@@ -131,22 +209,93 @@ class HouseClerkSource(DataSource):
                 if filing_dt is None or filing_dt < cutoff:
                     continue
 
-                pdf_url = self.PDF_URL.format(year=year, doc_id=doc_id)
-
-                trades.append(
-                    PoliticianTrade(
-                        politician_name=f"{first} {last}".strip(),
-                        chamber=Chamber.HOUSE,
-                        state=state_dst[:2] if state_dst else "",
-                        source="house_clerk",
-                        source_id=doc_id,
-                        filing_url=pdf_url,
-                        filing_date=filing_dt,
-                        transaction_type=TransactionType.UNKNOWN,
-                        ticker="",
-                    )
+                filings.append(
+                    {
+                        "politician_name": f"{first} {last}".strip(),
+                        "state": state_dst[:2] if state_dst else "",
+                        "filing_date": filing_dt,
+                        "doc_id": doc_id,
+                        "year": year,
+                        "pdf_url": self.PDF_URL.format(year=year, doc_id=doc_id),
+                    }
                 )
+        return filings
+
+    def _metadata_trade(self, filing: dict) -> PoliticianTrade:
+        return PoliticianTrade(
+            politician_name=filing["politician_name"],
+            chamber=Chamber.HOUSE,
+            state=filing["state"],
+            source=self.name,
+            source_id=filing["doc_id"],
+            filing_url=filing["pdf_url"],
+            filing_date=filing["filing_date"],
+            transaction_type=TransactionType.UNKNOWN,
+            ticker="",
+        )
+
+    async def _filing_to_trades(
+        self, client: httpx.AsyncClient, filing: dict
+    ) -> list[PoliticianTrade]:
+        """Download and parse one PTR PDF; fall back to a metadata row."""
+        doc_id: str = filing["doc_id"]
+
+        # DocIDs starting with "2" are e-filed (text PDFs); "8"/"9" are
+        # scanned paper filings that text extraction cannot handle.
+        if not doc_id.startswith("2") or not _PDFPLUMBER_AVAILABLE:
+            if not _PDFPLUMBER_AVAILABLE:
+                logger.debug("HouseClerkSource: pdfplumber not installed; metadata only")
+            return [self._metadata_trade(filing)]
+
+        try:
+            resp = await request_with_retry(client, "GET", filing["pdf_url"])
+            resp.raise_for_status()
+            text = await asyncio.to_thread(_extract_pdf_text, resp.content)
+            rows = parse_house_ptr_text(text)
+        except Exception:
+            logger.warning(
+                "HouseClerkSource: failed to parse PDF %s", doc_id, exc_info=True
+            )
+            rows = []
+
+        if not rows:
+            return [self._metadata_trade(filing)]
+
+        trades: list[PoliticianTrade] = []
+        for row in rows:
+            trades.append(
+                PoliticianTrade(
+                    politician_name=filing["politician_name"],
+                    chamber=Chamber.HOUSE,
+                    state=filing["state"],
+                    ticker=row["ticker"],
+                    asset_name=row["asset_name"],
+                    transaction_type=TransactionType.from_raw(row["transaction_type"]),
+                    transaction_date=_parse_date_flexible(row["transaction_date"]),
+                    filing_date=filing["filing_date"],
+                    amount_range=row["amount_range"],
+                    owner=row["owner"],
+                    source=self.name,
+                    source_id=doc_id,
+                    filing_url=filing["pdf_url"],
+                )
+            )
+        logger.info(
+            "HouseClerkSource: parsed %d transaction(s) from PTR %s (%s)",
+            len(trades),
+            doc_id,
+            filing["politician_name"],
+        )
         return trades
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from every page of a PDF (runs in a worker thread)."""
+    parts: list[str] = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            parts.append(page.extract_text() or "")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -157,16 +306,26 @@ class HouseClerkSource(DataSource):
 class SenateEFDSource(DataSource):
     """
     Fetches Senate trade filings from the Senate Electronic Financial
-    Disclosure (EFD) search system.
+    Disclosure (EFD) search system, then parses per-trade detail out of
+    e-filed PTR pages (which are plain HTML tables).
+
+    EFD requires every session to accept the "prohibition on use" agreement
+    (a POST to /search/home/ with the CSRF token) before any search or view
+    URL responds with data.
     """
 
-    SEARCH_URL = "https://efdsearch.senate.gov/search/report/data/"
-    HOME_URL = "https://efdsearch.senate.gov/search/"
+    name = "senate_efd"
+
+    BASE_URL = "https://efdsearch.senate.gov"
+    HOME_URL = BASE_URL + "/search/home/"
+    SEARCH_PAGE_URL = BASE_URL + "/search/"
+    SEARCH_URL = BASE_URL + "/search/report/data/"
 
     def __init__(self, *, lookback_days: int = 90) -> None:
         self.lookback_days = lookback_days
 
-    async def fetch_trades(self) -> list[PoliticianTrade]:
+    async def fetch_trades(self, known_ids: set[str] | None = None) -> list[PoliticianTrade]:
+        known_ids = known_ids or set()
         today = date.today()
         start = today - timedelta(days=self.lookback_days)
 
@@ -182,18 +341,13 @@ class SenateEFDSource(DataSource):
                     ),
                 },
             ) as client:
-                # Step 1 — visit the search page to obtain cookies / CSRF token
-                home_resp = await client.get(self.HOME_URL)
-                home_resp.raise_for_status()
+                await self._accept_agreement(client)
 
-                csrf_token = _extract_csrf_token(home_resp.text)
-                headers: dict[str, str] = {
-                    "Referer": self.HOME_URL,
-                }
+                csrf_token = client.cookies.get("csrftoken") or ""
+                headers: dict[str, str] = {"Referer": self.SEARCH_PAGE_URL}
                 if csrf_token:
                     headers["X-CSRFToken"] = csrf_token
 
-                # Step 2 — POST for PTR search results
                 form_data = {
                     "start": "0",
                     "length": "100",
@@ -202,15 +356,27 @@ class SenateEFDSource(DataSource):
                     "submitted_start_date": start.strftime("%m/%d/%Y"),
                     "submitted_end_date": today.strftime("%m/%d/%Y"),
                 }
-                resp = await client.post(
-                    self.SEARCH_URL,
-                    data=form_data,
-                    headers=headers,
+                resp = await request_with_retry(
+                    client, "POST", self.SEARCH_URL, data=form_data, headers=headers
                 )
                 resp.raise_for_status()
 
-                payload = resp.json()
-                return self._parse_response(payload)
+                filings = self._parse_response(resp.json())
+                new_filings = [f for f in filings if f["source_id"] not in known_ids]
+
+                if not settings.parse_filing_details:
+                    return [self._metadata_trade(f) for f in new_filings]
+
+                budget = settings.max_filings_per_cycle
+                trades: list[PoliticianTrade] = []
+                for filing in new_filings[:budget]:
+                    trades.extend(await self._filing_to_trades(client, filing))
+                skipped = len(new_filings) - min(budget, len(new_filings))
+                if skipped:
+                    logger.info(
+                        "SenateEFDSource: %d new filings deferred to later cycles", skipped
+                    )
+                return trades
         except Exception:
             logger.warning(
                 "SenateEFDSource: failed to fetch Senate disclosures",
@@ -218,22 +384,39 @@ class SenateEFDSource(DataSource):
             )
             return []
 
+    # -- session handshake ----------------------------------------------------
+
+    async def _accept_agreement(self, client: httpx.AsyncClient) -> None:
+        """Accept the EFD prohibition-on-use agreement to unlock the session."""
+        home_resp = await request_with_retry(client, "GET", self.HOME_URL)
+        home_resp.raise_for_status()
+
+        csrf_token = _extract_csrf_token(home_resp.text) or client.cookies.get("csrftoken", "")
+        resp = await request_with_retry(
+            client,
+            "POST",
+            self.HOME_URL,
+            data={"prohibition_agreement": "1", "csrfmiddlewaretoken": csrf_token},
+            headers={"Referer": self.HOME_URL},
+        )
+        resp.raise_for_status()
+
     # -- parsing -------------------------------------------------------------
 
-    def _parse_response(self, payload: dict) -> list[PoliticianTrade]:
+    def _parse_response(self, payload: dict) -> list[dict]:
         rows: list[list[str]] = payload.get("data", [])
-        trades: list[PoliticianTrade] = []
+        filings: list[dict] = []
 
         for row in rows:
             try:
-                trade = self._parse_row(row)
-                if trade is not None:
-                    trades.append(trade)
+                filing = self._parse_row(row)
+                if filing is not None:
+                    filings.append(filing)
             except Exception:
                 logger.debug("SenateEFDSource: failed to parse row: %s", row, exc_info=True)
-        return trades
+        return filings
 
-    def _parse_row(self, row: list[str]) -> PoliticianTrade | None:
+    def _parse_row(self, row: list[str]) -> dict | None:
         # Expected columns:
         # [0] checkbox HTML, [1] first_name, [2] last_name, [3] office/state,
         # [4] report_type, [5] filing_date, [6] link HTML
@@ -246,26 +429,88 @@ class SenateEFDSource(DataSource):
         filing_date_str = _strip_html(row[5]).strip()
         link_html = row[6]
 
-        filing_url = _extract_href(link_html)
+        filing_url = _extract_href(link_html) or _extract_href(row[4])
         if filing_url and not filing_url.startswith("http"):
-            filing_url = f"https://efdsearch.senate.gov{filing_url}"
+            filing_url = f"{self.BASE_URL}{filing_url}"
 
         filing_dt = _parse_date_flexible(filing_date_str)
 
         # Derive a stable source_id from the URL path if available
-        source_id = filing_url.rsplit("/", 1)[-1] if filing_url else ""
+        source_id = filing_url.rstrip("/").rsplit("/", 1)[-1] if filing_url else ""
 
+        return {
+            "politician_name": f"{first_name} {last_name}".strip(),
+            "state": office[:2] if office else "",
+            "filing_date": filing_dt,
+            "filing_url": filing_url,
+            "source_id": source_id,
+        }
+
+    def _metadata_trade(self, filing: dict) -> PoliticianTrade:
         return PoliticianTrade(
-            politician_name=f"{first_name} {last_name}".strip(),
+            politician_name=filing["politician_name"],
             chamber=Chamber.SENATE,
-            state=office[:2] if office else "",
-            source="senate_efd",
-            source_id=source_id,
-            filing_url=filing_url,
-            filing_date=filing_dt,
+            state=filing["state"],
+            source=self.name,
+            source_id=filing["source_id"],
+            filing_url=filing["filing_url"],
+            filing_date=filing["filing_date"],
             transaction_type=TransactionType.UNKNOWN,
             ticker="",
         )
+
+    async def _filing_to_trades(
+        self, client: httpx.AsyncClient, filing: dict
+    ) -> list[PoliticianTrade]:
+        """Fetch and parse one e-filed PTR page; fall back to a metadata row."""
+        url: str = filing["filing_url"]
+
+        # Only electronic PTRs are HTML tables; paper filings are scans.
+        if "/view/ptr/" not in url:
+            return [self._metadata_trade(filing)]
+
+        try:
+            resp = await request_with_retry(client, "GET", url)
+            resp.raise_for_status()
+            rows = parse_senate_ptr_html(resp.text)
+        except Exception:
+            logger.warning(
+                "SenateEFDSource: failed to parse PTR %s", filing["source_id"], exc_info=True
+            )
+            rows = []
+
+        if not rows:
+            return [self._metadata_trade(filing)]
+
+        trades: list[PoliticianTrade] = []
+        for row in rows:
+            asset_name = row["asset_name"]
+            if row["asset_type"] and row["asset_type"].lower() not in asset_name.lower():
+                asset_name = f"{asset_name} ({row['asset_type']})" if asset_name else row["asset_type"]
+            trades.append(
+                PoliticianTrade(
+                    politician_name=filing["politician_name"],
+                    chamber=Chamber.SENATE,
+                    state=filing["state"],
+                    ticker=row["ticker"].upper(),
+                    asset_name=asset_name,
+                    transaction_type=TransactionType.from_raw(row["transaction_type"]),
+                    transaction_date=_parse_date_flexible(row["transaction_date"]),
+                    filing_date=filing["filing_date"],
+                    amount_range=row["amount_range"],
+                    owner=row["owner"],
+                    source=self.name,
+                    source_id=filing["source_id"],
+                    filing_url=url,
+                )
+            )
+        logger.info(
+            "SenateEFDSource: parsed %d transaction(s) from PTR %s (%s)",
+            len(trades),
+            filing["source_id"],
+            filing["politician_name"],
+        )
+        return trades
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +537,12 @@ class FinnhubSource(DataSource):
     Uses Finnhub's congressional-trading endpoint to pull disclosed trades
     for a curated list of tickers.
 
-    Only active when ``settings.finnhub_api_key`` is set.
+    Only active when ``settings.finnhub_api_key`` is set. Note this endpoint
+    is on Finnhub's premium tier — free keys receive 403s, which are logged
+    once per cycle with a clear message.
     """
+
+    name = "finnhub"
 
     API_URL = "https://finnhub.io/api/v1/stock/congressional-trading"
 
@@ -308,15 +557,19 @@ class FinnhubSource(DataSource):
         self.api_key = api_key or settings.finnhub_api_key
         self.tickers = tickers if tickers is not None else list(_CONGRESS_TICKERS)
         self.lookback_days = lookback_days
-        # Semaphore limits concurrency; we also sleep to stay within RPM
-        self._semaphore = asyncio.Semaphore(requests_per_minute)
-        self._interval = 60.0 / requests_per_minute  # seconds between requests
+        # Serialize dispatch so requests are spaced ``interval`` apart,
+        # keeping the burst rate under the API's per-minute limit.
+        self._interval = 60.0 / requests_per_minute
+        self._pace_lock = asyncio.Lock()
+        self._next_slot = 0.0
+        self._access_denied = False
 
-    async def fetch_trades(self) -> list[PoliticianTrade]:
+    async def fetch_trades(self, known_ids: set[str] | None = None) -> list[PoliticianTrade]:
         if not self.api_key:
             logger.debug("FinnhubSource: no API key configured — skipping")
             return []
 
+        self._access_denied = False
         cutoff = date.today() - timedelta(days=self.lookback_days)
         trades: list[PoliticianTrade] = []
 
@@ -334,21 +587,41 @@ class FinnhubSource(DataSource):
 
         return trades
 
+    async def _pace(self) -> None:
+        """Reserve the next dispatch slot, spacing requests evenly."""
+        async with self._pace_lock:
+            now = time.monotonic()
+            wait = self._next_slot - now
+            self._next_slot = max(now, self._next_slot) + self._interval
+        if wait > 0:
+            await asyncio.sleep(wait)
+
     async def _fetch_ticker(
         self,
         client: httpx.AsyncClient,
         ticker: str,
         cutoff: date,
     ) -> list[PoliticianTrade]:
-        async with self._semaphore:
-            await asyncio.sleep(self._interval)
+        if self._access_denied:
+            return []
+        await self._pace()
 
-            resp = await client.get(
-                self.API_URL,
-                params={"symbol": ticker, "token": self.api_key},
-            )
-            resp.raise_for_status()
-            payload = resp.json()
+        resp = await client.get(
+            self.API_URL,
+            params={"symbol": ticker, "token": self.api_key},
+        )
+        if resp.status_code in (401, 403):
+            if not self._access_denied:
+                self._access_denied = True
+                logger.error(
+                    "FinnhubSource: API key rejected (%d). The congressional-trading "
+                    "endpoint requires a paid Finnhub plan — the free tier cannot "
+                    "access it. Remove FINNHUB_API_KEY or upgrade the plan.",
+                    resp.status_code,
+                )
+            return []
+        resp.raise_for_status()
+        payload = resp.json()
 
         items: list[dict] = payload.get("data", [])
         symbol: str = payload.get("symbol", ticker)
@@ -387,7 +660,7 @@ class FinnhubSource(DataSource):
                     filing_date=filing_dt,
                     amount_range=amount_range,
                     owner=item.get("ownerType", ""),
-                    source="finnhub",
+                    source=self.name,
                     source_id=source_id,
                 )
             )
@@ -408,8 +681,19 @@ class MultiFetcher:
     def __init__(self, sources: list[DataSource]) -> None:
         self.sources = sources
 
-    async def fetch_all_trades(self) -> list[PoliticianTrade]:
-        coros = [source.fetch_trades() for source in self.sources]
+    async def fetch_all_trades(
+        self, known_ids: dict[str, set[str]] | None = None
+    ) -> list[PoliticianTrade]:
+        """Fetch from every source.
+
+        ``known_ids`` maps source name -> set of already-ingested source_ids
+        so sources can skip filings that are in the database.
+        """
+        known_ids = known_ids or {}
+        coros = [
+            source.fetch_trades(known_ids.get(source.name, set()))
+            for source in self.sources
+        ]
         results = await asyncio.gather(*coros, return_exceptions=True)
 
         seen: set[str] = set()

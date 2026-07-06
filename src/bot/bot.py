@@ -7,10 +7,11 @@ import discord
 from discord import app_commands
 
 from src.config import settings
-from src.bot.embeds import trade_alert_embed
+from src.bot.embeds import trade_alert_embed, weekly_digest_embed
 from src.storage.database import get_followers
 
 if TYPE_CHECKING:
+    from src.data.enrichment import EnrichmentService
     from src.data.models import PoliticianTrade
     from src.trading.base import Broker
 
@@ -20,12 +21,17 @@ log = logging.getLogger(__name__)
 class TradeBot(discord.Client):
     """Discord bot that sends politician-trade alerts and exposes slash commands."""
 
-    def __init__(self, broker: Broker | None = None) -> None:
+    def __init__(
+        self,
+        broker: Broker | None = None,
+        enrichment: EnrichmentService | None = None,
+    ) -> None:
         intents = discord.Intents.default()
         intents.message_content = False  # we do not need message content
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self._broker = broker
+        self._enrichment = enrichment
 
     # -- lifecycle hooks --------------------------------------------------
 
@@ -33,7 +39,9 @@ class TradeBot(discord.Client):
         """Called once the bot has connected but before it starts receiving events."""
         from src.bot.commands import setup_commands
 
-        await setup_commands(self, self.tree, broker=self._broker)
+        await setup_commands(
+            self, self.tree, broker=self._broker, enrichment=self._enrichment
+        )
         await self.tree.sync()
         log.info("Slash commands synced")
 
@@ -85,6 +93,18 @@ class TradeBot(discord.Client):
                 )
             except Exception:
                 log.debug("Could not DM user %s", user_id)
+
+    async def send_weekly_digest(
+        self, top_tickers: list[dict], most_active: list[dict]
+    ) -> None:
+        """Post the weekly digest embed to the alert channel."""
+        if not settings.alert_channel_id:
+            return
+        channel = self.get_channel(settings.alert_channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await channel.send(embed=weekly_digest_embed(top_tickers, most_active))
+        else:
+            log.warning("Digest channel %s unavailable; skipping", settings.alert_channel_id)
 
     # -- convenience runner -----------------------------------------------
 
