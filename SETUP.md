@@ -1,5 +1,10 @@
 # Setup Guide — Dry Run to Deployment
 
+> **Note:** this was the original Windows-oriented bootstrap guide. The
+> canonical, up-to-date runbook covering every feature (dashboard, scanners,
+> Polymarket, real-time data, paper→live trading) is
+> **[LIVE_SETUP.md](LIVE_SETUP.md)** — use that for a live test.
+
 This bot has never been run. Follow these phases in order: get it working locally
 against paper trading first, then deploy once it's proven stable.
 

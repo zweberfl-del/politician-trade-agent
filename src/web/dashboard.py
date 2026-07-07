@@ -79,6 +79,42 @@ def _render_icon_png(size: int) -> bytes | None:
     return buf.getvalue()
 
 
+# PWA plumbing must load before login; it exposes nothing sensitive.
+_PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/icon.svg"}
+_AUTH_COOKIE = "dash_token"
+
+
+@web.middleware
+async def _auth_middleware(request: web.Request, handler):
+    """Shared-token gate, active only when DASHBOARD_AUTH_TOKEN is set.
+
+    Accepts the token from (in order) an Authorization: Bearer header, a
+    ?token= query parameter, or the session cookie. A correct query-param
+    login sets the cookie so phones/PWAs stay signed in.
+    """
+    token = settings.dashboard_auth_token
+    if not token or request.path in _PUBLIC_PATHS or request.path.startswith("/icon-"):
+        return await handler(request)
+
+    bearer = request.headers.get("Authorization", "")
+    presented = (
+        bearer.removeprefix("Bearer ").strip()
+        or request.query.get("token", "")
+        or request.cookies.get(_AUTH_COOKIE, "")
+    )
+    if presented != token:
+        raise web.HTTPUnauthorized(
+            text="Unauthorized: open /?token=<DASHBOARD_AUTH_TOKEN> to sign in"
+        )
+
+    response = await handler(request)
+    if request.query.get("token") == token:
+        response.set_cookie(
+            _AUTH_COOKIE, token, max_age=30 * 24 * 3600, httponly=True, samesite="Lax"
+        )
+    return response
+
+
 class DashboardServer:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -86,7 +122,7 @@ class DashboardServer:
         self._icon_cache: dict[int, bytes | None] = {}
 
     def build_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[_auth_middleware])
         app.add_routes(
             [
                 web.get("/", self.index),
@@ -94,6 +130,7 @@ class DashboardServer:
                 web.get("/sw.js", self.service_worker),
                 web.get("/icon.svg", self.icon_svg),
                 web.get("/icon-{size:\\d+}.png", self.icon_png),
+                web.get("/api/health", self.api_health),
                 web.get("/api/trades", self.api_trades),
                 web.get("/api/flow", self.api_flow),
                 web.get("/api/prediction", self.api_prediction),
@@ -161,6 +198,33 @@ class DashboardServer:
 
         limit = _bounded_int(request.query.get("limit"), default=25)
         return web.json_response(await get_recent_flow_events(self.db_path, limit=limit))
+
+    async def api_health(self, request: web.Request) -> web.Response:
+        """Liveness + freshness: are we up, and when did each loop last run?
+
+        Wire this into any uptime monitor; a stale ``last_poll_at`` means the
+        bot process is up but the poller has silently stopped.
+        """
+        import time as _time
+
+        from src.storage.database import count_trades, kv_get
+
+        last_poll = await kv_get(self.db_path, "last_poll_at")
+        last_flow = await kv_get(self.db_path, "last_flow_scan_at")
+        last_prediction = await kv_get(self.db_path, "last_prediction_scan_at")
+
+        def _age(raw: str | None) -> float | None:
+            return round(_time.time() - float(raw), 1) if raw else None
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "trades_stored": await count_trades(self.db_path),
+                "last_poll_age_s": _age(last_poll),
+                "last_flow_scan_age_s": _age(last_flow),
+                "last_prediction_scan_age_s": _age(last_prediction),
+            }
+        )
 
     async def api_prediction(self, request: web.Request) -> web.Response:
         from src.storage.database import get_recent_prediction_events

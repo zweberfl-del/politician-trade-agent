@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     enable_dashboard: bool = False
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 8080
+    # Shared secret for the dashboard. Empty = no auth (LAN use only).
+    # When set, open the dashboard once as /?token=<value> — a cookie keeps
+    # the phone/PWA logged in; API callers may send Authorization: Bearer.
+    dashboard_auth_token: str = ""
 
     # --- Prediction markets (Polymarket) ---
     # Watch the public trade feed for unusual bets: fresh wallets, proven

@@ -30,9 +30,14 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 - Alerts show the wallet's age, win/loss record, and lifetime PnL; `/polymarket` lists recent hits, and the dashboard has a live panel (`/api/prediction`)
 - Uses Polymarket's free public data API — no key, no wallet needed
 
+> **Going live?** Follow [LIVE_SETUP.md](LIVE_SETUP.md) — a phased runbook
+> from fresh clone to live test, with verification gates, tuning guidance,
+> security/licensing considerations, costs, and troubleshooting.
+
 **Web dashboard & mobile app**
 - `ENABLE_DASHBOARD=true` serves a responsive browser dashboard: live congressional trade feed, unusual options flow feed, top tickers, most active politicians, and per-ticker GEX / dark pool lookups — backed by JSON APIs (`/api/trades`, `/api/flow`, `/api/gex/{ticker}`, `/api/darkpool/{ticker}`, …)
 - The dashboard is an installable **PWA**: open it on your phone and use "Add to Home Screen" to get a standalone app (own icon, no browser chrome) — `python -m src.main --dashboard-only` serves it without any Discord/broker credentials
+- Optional token auth (`DASHBOARD_AUTH_TOKEN`) gates the UI and APIs; `/api/health` reports heartbeat ages for uptime monitoring
 
 **Plumbing**
 - SQLite storage with full deduplication — no duplicate alerts or orders; first run backfills history silently instead of flooding the channel

@@ -115,9 +115,14 @@ class PredictionScanner:
         return posted
 
     async def _loop(self) -> None:
+        import time
+
+        from src.storage.database import kv_set
+
         while self._running:
             try:
                 await self.scan_once()
+                await kv_set(self.db_path, "last_prediction_scan_at", str(time.time()))
             except Exception:
                 log.exception("Unhandled error in prediction scan")
             await asyncio.sleep(self.interval_minutes * 60)

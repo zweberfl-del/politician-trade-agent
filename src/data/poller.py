@@ -119,6 +119,13 @@ class Poller:
 
         await self._maybe_post_digest()
 
+        try:
+            from src.storage.database import kv_set
+
+            await kv_set(self.db_path, "last_poll_at", str(time.time()))
+        except Exception:
+            log.debug("Failed to record poll heartbeat", exc_info=True)
+
         duration = time.monotonic() - started
         log.info(
             "Poll cycle done in %.1fs — fetched=%d new=%d alerted=%d mirrored=%d%s",

@@ -55,6 +55,7 @@ async def client(tmp_path):
 
     server = DashboardServer(db_path)
     async with TestClient(TestServer(server.build_app())) as test_client:
+        test_client.db_path = db_path
         yield test_client
 
 
@@ -118,6 +119,70 @@ class TestDashboard:
         monkeypatch.setattr(options_module, "build_options_provider", EmptyProvider)
         resp = await client.get("/api/gex/NOPE")
         assert resp.status == 404
+
+
+class TestAuth:
+    """Token gate: off by default, enforced everywhere except PWA plumbing."""
+
+    async def test_no_token_configured_means_open(self, client) -> None:
+        assert (await client.get("/api/trades")).status == 200
+
+    async def test_requests_rejected_without_token(self, client, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "dashboard_auth_token", "s3cret")
+        assert (await client.get("/")).status == 401
+        assert (await client.get("/api/trades")).status == 401
+
+    async def test_bearer_header_accepted(self, client, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "dashboard_auth_token", "s3cret")
+        resp = await client.get(
+            "/api/trades", headers={"Authorization": "Bearer s3cret"}
+        )
+        assert resp.status == 200
+
+    async def test_query_token_sets_cookie_session(self, client, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "dashboard_auth_token", "s3cret")
+        resp = await client.get("/?token=s3cret")
+        assert resp.status == 200
+        assert "dash_token" in resp.cookies
+        # Follow-up request rides the cookie, no token needed
+        assert (await client.get("/api/trades")).status == 200
+
+    async def test_wrong_token_rejected(self, client, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "dashboard_auth_token", "s3cret")
+        assert (await client.get("/?token=wrong")).status == 401
+
+    async def test_pwa_assets_stay_public(self, client, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "dashboard_auth_token", "s3cret")
+        for path in ("/manifest.webmanifest", "/sw.js", "/icon.svg", "/icon-192.png"):
+            assert (await client.get(path)).status == 200, path
+
+
+class TestHealth:
+    async def test_health_reports_counts_and_heartbeats(self, client) -> None:
+        payload = await (await client.get("/api/health")).json()
+        assert payload["status"] == "ok"
+        assert payload["trades_stored"] == 1
+        assert payload["last_poll_age_s"] is None  # poller never ran
+
+    async def test_health_age_computed(self, client) -> None:
+        import time
+
+        from src.storage.database import kv_set
+
+        await kv_set(client.db_path, "last_poll_at", str(time.time() - 30))
+        payload = await (await client.get("/api/health")).json()
+        assert payload["last_poll_age_s"] is not None
+        assert 25 <= payload["last_poll_age_s"] <= 60
 
 
 class TestPwa:
