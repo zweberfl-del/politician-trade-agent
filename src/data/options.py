@@ -125,6 +125,117 @@ class YahooOptionsProvider(OptionsProvider):
         return payload, chain
 
 
+class TradierOptionsProvider(OptionsProvider):
+    """Options chains from the Tradier brokerage API.
+
+    Data grade follows the account attached to the key: a (free) Tradier
+    brokerage account receives **real-time** OPRA quotes; a sandbox key
+    receives 15-minute-delayed data. Set ``OPTIONS_PROVIDER=tradier`` and
+    ``TRADIER_API_KEY`` to enable.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str = "",
+        base_url: str = "",
+        max_expirations: int = 4,
+    ) -> None:
+        from src.config import settings
+
+        self.api_key = api_key or settings.tradier_api_key
+        self.base_url = (base_url or settings.tradier_base_url).rstrip("/")
+        self.max_expirations = max_expirations
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
+
+    async def fetch_chain(self, ticker: str) -> OptionsChain | None:
+        ticker = ticker.upper()
+        if not self.api_key:
+            logger.warning("TradierOptionsProvider: no API key configured")
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=30.0, headers=self._headers) as client:
+                quote_resp = await request_with_retry(
+                    client,
+                    "GET",
+                    f"{self.base_url}/v1/markets/quotes",
+                    params={"symbols": ticker},
+                )
+                quote_resp.raise_for_status()
+                quote = quote_resp.json().get("quotes", {}).get("quote", {})
+                if isinstance(quote, list):
+                    quote = quote[0] if quote else {}
+                spot = float(quote.get("last") or 0.0)
+
+                exp_resp = await request_with_retry(
+                    client,
+                    "GET",
+                    f"{self.base_url}/v1/markets/options/expirations",
+                    params={"symbol": ticker},
+                )
+                exp_resp.raise_for_status()
+                dates = (exp_resp.json().get("expirations") or {}).get("date", [])
+                if isinstance(dates, str):
+                    dates = [dates]
+
+                chain = OptionsChain(ticker=ticker, spot=spot)
+                for expiry in dates[: self.max_expirations]:
+                    chain_resp = await request_with_retry(
+                        client,
+                        "GET",
+                        f"{self.base_url}/v1/markets/options/chains",
+                        params={"symbol": ticker, "expiration": expiry, "greeks": "true"},
+                    )
+                    chain_resp.raise_for_status()
+                    options = (chain_resp.json().get("options") or {}).get("option", [])
+                    for raw in options if isinstance(options, list) else [options]:
+                        contract = parse_tradier_contract(raw, ticker)
+                        if contract is not None:
+                            chain.contracts.append(contract)
+                return chain
+        except Exception:
+            logger.warning("TradierOptionsProvider: failed for %s", ticker, exc_info=True)
+            return None
+
+
+def parse_tradier_contract(raw: dict, ticker: str) -> OptionContract | None:
+    """Convert one raw Tradier chain entry; None when malformed."""
+    try:
+        greeks = raw.get("greeks") or {}
+        return OptionContract(
+            contract_symbol=raw.get("symbol", ""),
+            ticker=ticker,
+            option_type=str(raw["option_type"]).lower(),
+            strike=float(raw["strike"]),
+            expiration=date.fromisoformat(raw["expiration_date"]),
+            last_price=float(raw.get("last") or 0.0),
+            bid=float(raw.get("bid") or 0.0),
+            ask=float(raw.get("ask") or 0.0),
+            volume=int(raw.get("volume") or 0),
+            open_interest=int(raw.get("open_interest") or 0),
+            implied_volatility=float(greeks.get("mid_iv") or 0.0),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def build_options_provider() -> OptionsProvider:
+    """Pick the configured chain source (Tradier real-time or Yahoo delayed)."""
+    from src.config import settings
+
+    if settings.options_provider.lower() == "tradier" and settings.tradier_api_key:
+        return TradierOptionsProvider()
+    if settings.options_provider.lower() == "tradier":
+        logger.warning(
+            "OPTIONS_PROVIDER=tradier but TRADIER_API_KEY is empty — "
+            "falling back to delayed Yahoo chains"
+        )
+    return YahooOptionsProvider()
+
+
 def parse_yahoo_contract(raw: dict, ticker: str, option_type: str) -> OptionContract | None:
     """Convert one raw Yahoo contract dict; None when malformed."""
     try:

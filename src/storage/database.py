@@ -97,6 +97,27 @@ CREATE TABLE IF NOT EXISTS flow_alerts (
 );
 """
 
+# Added in schema v4: flow alerts with full contract detail, feeding both the
+# per-day dedup check and the web dashboard's flow feed.
+_SCHEMA_V4_SQL = """
+CREATE TABLE IF NOT EXISTS flow_events (
+    contract_key       TEXT,
+    alert_date         TEXT,
+    ticker             TEXT,
+    option_type        TEXT,
+    strike             REAL,
+    expiration         TEXT,
+    premium_usd        REAL,
+    volume             INTEGER,
+    open_interest      INTEGER,
+    vol_oi_ratio       REAL,
+    sentiment          TEXT,
+    spot               REAL,
+    created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contract_key, alert_date)
+);
+"""
+
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
@@ -111,6 +132,7 @@ async def init_db(db_path: str) -> str:
         await db.executescript(_SCHEMA_SQL)
         await db.executescript(_SCHEMA_V2_SQL)
         await db.executescript(_SCHEMA_V3_SQL)
+        await db.executescript(_SCHEMA_V4_SQL)
         await db.commit()
     logger.info("Database initialised at %s", db_path)
     return db_path
@@ -490,19 +512,46 @@ async def upsert_price_history(db_path: str, ticker: str, history: dict[str, flo
 async def was_flow_alerted(db_path: str, contract_key: str, alert_date: str) -> bool:
     async with aiosqlite.connect(db_path) as db:
         cursor = await db.execute(
-            "SELECT 1 FROM flow_alerts WHERE contract_key = ? AND alert_date = ?",
+            "SELECT 1 FROM flow_events WHERE contract_key = ? AND alert_date = ?",
             (contract_key, alert_date),
         )
         return await cursor.fetchone() is not None
 
 
-async def record_flow_alert(db_path: str, contract_key: str, alert_date: str) -> None:
+async def record_flow_event(db_path: str, event: dict) -> None:
+    """Store one unusual-activity alert with its contract detail.
+
+    *event* keys: contract_key, alert_date, ticker, option_type, strike,
+    expiration, premium_usd, volume, open_interest, vol_oi_ratio,
+    sentiment, spot.
+    """
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO flow_alerts (contract_key, alert_date) VALUES (?, ?)",
-            (contract_key, alert_date),
+            """
+            INSERT OR IGNORE INTO flow_events (
+                contract_key, alert_date, ticker, option_type, strike,
+                expiration, premium_usd, volume, open_interest,
+                vol_oi_ratio, sentiment, spot
+            ) VALUES (
+                :contract_key, :alert_date, :ticker, :option_type, :strike,
+                :expiration, :premium_usd, :volume, :open_interest,
+                :vol_oi_ratio, :sentiment, :spot
+            )
+            """,
+            event,
         )
         await db.commit()
+
+
+async def get_recent_flow_events(db_path: str, limit: int = 25) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM flow_events ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------

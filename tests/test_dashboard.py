@@ -1,0 +1,120 @@
+"""Web dashboard endpoints against a real database, external calls faked."""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+
+from src.data.models import Chamber, PoliticianTrade, TransactionType
+from src.data.options import OptionContract, OptionsChain, OptionsProvider
+from src.storage.database import insert_trades, record_flow_event
+from src.storage.migrations import run_migrations
+from src.web.dashboard import DashboardServer
+
+
+@pytest.fixture
+async def client(tmp_path):
+    db_path = str(tmp_path / "dash.db")
+    await run_migrations(db_path)
+
+    await insert_trades(
+        db_path,
+        [
+            PoliticianTrade(
+                politician_name="Jane Example",
+                chamber=Chamber.HOUSE,
+                ticker="AAPL",
+                transaction_type=TransactionType.PURCHASE,
+                transaction_date=date.today() - timedelta(days=2),
+                filing_date=date.today() - timedelta(days=1),
+                amount_range="$15,001 - $50,000",
+                source="house_clerk",
+                source_id="doc1",
+            )
+        ],
+    )
+    await record_flow_event(
+        db_path,
+        {
+            "contract_key": "TST-C-105",
+            "alert_date": date.today().isoformat(),
+            "ticker": "TST",
+            "option_type": "call",
+            "strike": 105.0,
+            "expiration": (date.today() + timedelta(days=14)).isoformat(),
+            "premium_usd": 1_000_000.0,
+            "volume": 5000,
+            "open_interest": 500,
+            "vol_oi_ratio": 10.0,
+            "sentiment": "bullish",
+            "spot": 100.0,
+        },
+    )
+
+    server = DashboardServer(db_path)
+    async with TestClient(TestServer(server.build_app())) as test_client:
+        yield test_client
+
+
+class TestDashboard:
+    async def test_index_serves_html(self, client) -> None:
+        resp = await client.get("/")
+        assert resp.status == 200
+        body = await resp.text()
+        assert "Politician Trade Agent" in body
+        assert "viewport" in body  # responsive/mobile meta
+
+    async def test_api_trades(self, client) -> None:
+        rows = await (await client.get("/api/trades")).json()
+        assert rows[0]["politician_name"] == "Jane Example"
+        assert rows[0]["ticker"] == "AAPL"
+
+    async def test_api_trades_filter(self, client) -> None:
+        rows = await (await client.get("/api/trades?ticker=NVDA")).json()
+        assert rows == []
+
+    async def test_api_flow(self, client) -> None:
+        rows = await (await client.get("/api/flow")).json()
+        assert rows[0]["ticker"] == "TST"
+        assert rows[0]["sentiment"] == "bullish"
+
+    async def test_api_top_and_active(self, client) -> None:
+        top = await (await client.get("/api/top")).json()
+        assert top[0]["ticker"] == "AAPL"
+        active = await (await client.get("/api/active")).json()
+        assert active[0]["politician_name"] == "Jane Example"
+
+    async def test_api_gex_uses_configured_provider(self, client, monkeypatch) -> None:
+        class FakeProvider(OptionsProvider):
+            async def fetch_chain(self, ticker: str) -> OptionsChain:
+                contract = OptionContract(
+                    contract_symbol="TST-C-100",
+                    ticker=ticker,
+                    option_type="call",
+                    strike=100.0,
+                    expiration=date.today() + timedelta(days=30),
+                    volume=100,
+                    open_interest=1000,
+                    implied_volatility=0.25,
+                )
+                return OptionsChain(ticker=ticker, spot=100.0, contracts=[contract])
+
+        import src.data.options as options_module
+
+        monkeypatch.setattr(options_module, "build_options_provider", FakeProvider)
+        payload = await (await client.get("/api/gex/TST")).json()
+        assert payload["ticker"] == "TST"
+        assert payload["net_gex"] > 0
+
+    async def test_api_gex_404_when_no_chain(self, client, monkeypatch) -> None:
+        class EmptyProvider(OptionsProvider):
+            async def fetch_chain(self, ticker: str) -> None:
+                return None
+
+        import src.data.options as options_module
+
+        monkeypatch.setattr(options_module, "build_options_provider", EmptyProvider)
+        resp = await client.get("/api/gex/NOPE")
+        assert resp.status == 404

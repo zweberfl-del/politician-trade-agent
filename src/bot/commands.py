@@ -266,10 +266,10 @@ async def setup_commands(
     @app_commands.describe(ticker="Underlying ticker, e.g. SPY")
     async def flow_cmd(interaction: discord.Interaction, ticker: str) -> None:
         from src.analysis.flow import chain_sentiment, detect_unusual_activity
-        from src.data.options import YahooOptionsProvider
+        from src.data.options import build_options_provider
 
         await interaction.response.defer()
-        chain = await YahooOptionsProvider().fetch_chain(ticker)
+        chain = await build_options_provider().fetch_chain(ticker)
         if chain is None or not chain.contracts:
             await interaction.followup.send(
                 f"No options chain available for **{ticker.upper()}**.", ephemeral=True
@@ -291,10 +291,10 @@ async def setup_commands(
     @app_commands.describe(ticker="Underlying ticker, e.g. SPY")
     async def gex_cmd(interaction: discord.Interaction, ticker: str) -> None:
         from src.analysis.gex import compute_gex
-        from src.data.options import YahooOptionsProvider
+        from src.data.options import build_options_provider
 
         await interaction.response.defer()
-        chain = await YahooOptionsProvider().fetch_chain(ticker)
+        chain = await build_options_provider().fetch_chain(ticker)
         if chain is None or not chain.contracts or chain.spot <= 0:
             await interaction.followup.send(
                 f"No options chain available for **{ticker.upper()}**.", ephemeral=True

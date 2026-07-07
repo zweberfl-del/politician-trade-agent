@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     flow_watchlist: str = "SPY,QQQ,IWM,AAPL,MSFT,NVDA,AMZN,META,TSLA,GOOGL"
     flow_min_premium_usd: float = 250_000.0
     flow_poll_minutes: int = 10
+    # Chain source: "yahoo" (delayed ~15 min, no key) or "tradier"
+    # (real-time OPRA quotes with a brokerage-account key).
+    options_provider: str = "yahoo"
+    tradier_api_key: str = ""
+    tradier_base_url: str = "https://api.tradier.com"
+
+    # --- Web dashboard ---
+    enable_dashboard: bool = False
+    dashboard_host: str = "0.0.0.0"
+    dashboard_port: int = 8080
 
     # --- Alert filters ---
     # Minimum disclosed amount (lower bound of the range) for channel alerts.

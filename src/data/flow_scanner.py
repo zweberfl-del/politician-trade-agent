@@ -72,7 +72,7 @@ class FlowScanner:
 
     async def scan_once(self) -> int:
         """Scan the watchlist once; returns the number of alerts posted."""
-        from src.storage.database import was_flow_alerted, record_flow_alert
+        from src.storage.database import record_flow_event, was_flow_alerted
 
         posted = 0
         for ticker in settings.flow_watchlist_tickers():
@@ -85,15 +85,32 @@ class FlowScanner:
                 limit=3,
             )
             for hit in hits:
-                key = hit.contract.contract_symbol or (
-                    f"{ticker}|{hit.contract.option_type}|{hit.contract.strike}"
-                    f"|{hit.contract.expiration}"
+                c = hit.contract
+                key = c.contract_symbol or (
+                    f"{ticker}|{c.option_type}|{c.strike}|{c.expiration}"
                 )
-                if await was_flow_alerted(self.db_path, key, date.today().isoformat()):
+                today = date.today().isoformat()
+                if await was_flow_alerted(self.db_path, key, today):
                     continue
                 try:
                     await self.bot.send_flow_alert(hit)
-                    await record_flow_alert(self.db_path, key, date.today().isoformat())
+                    await record_flow_event(
+                        self.db_path,
+                        {
+                            "contract_key": key,
+                            "alert_date": today,
+                            "ticker": c.ticker,
+                            "option_type": c.option_type,
+                            "strike": c.strike,
+                            "expiration": c.expiration.isoformat(),
+                            "premium_usd": c.premium_notional,
+                            "volume": c.volume,
+                            "open_interest": c.open_interest,
+                            "vol_oi_ratio": hit.vol_oi_ratio,
+                            "sentiment": hit.sentiment,
+                            "spot": hit.spot,
+                        },
+                    )
                     posted += 1
                 except Exception:
                     log.exception("Failed to post flow alert for %s", key)
