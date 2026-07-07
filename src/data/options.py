@@ -223,12 +223,21 @@ def parse_tradier_contract(raw: dict, ticker: str) -> OptionContract | None:
 
 
 def build_options_provider() -> OptionsProvider:
-    """Pick the configured chain source (Tradier real-time or Yahoo delayed)."""
+    """Pick the best available chain source.
+
+    Real-time is the default whenever it's possible: a Tradier key upgrades
+    every consumer (flow scanner, /flow, /gex, dashboard) to real-time OPRA
+    quotes automatically. Set ``OPTIONS_PROVIDER=yahoo`` to force delayed
+    chains even with a key present.
+    """
     from src.config import settings
 
-    if settings.options_provider.lower() == "tradier" and settings.tradier_api_key:
+    choice = settings.options_provider.lower()
+    if choice == "yahoo":
+        return YahooOptionsProvider()
+    if settings.tradier_api_key:
         return TradierOptionsProvider()
-    if settings.options_provider.lower() == "tradier":
+    if choice == "tradier":
         logger.warning(
             "OPTIONS_PROVIDER=tradier but TRADIER_API_KEY is empty — "
             "falling back to delayed Yahoo chains"

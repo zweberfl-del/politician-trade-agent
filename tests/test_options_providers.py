@@ -52,6 +52,27 @@ class TestProviderSelection:
         monkeypatch.setattr(config.settings, "options_provider", "yahoo")
         assert isinstance(build_options_provider(), YahooOptionsProvider)
 
+    def test_auto_upgrades_to_realtime_when_key_present(self, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "options_provider", "auto")
+        monkeypatch.setattr(config.settings, "tradier_api_key", "test-key")
+        assert isinstance(build_options_provider(), TradierOptionsProvider)
+
+    def test_auto_without_key_is_yahoo(self, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "options_provider", "auto")
+        monkeypatch.setattr(config.settings, "tradier_api_key", "")
+        assert isinstance(build_options_provider(), YahooOptionsProvider)
+
+    def test_forced_yahoo_ignores_key(self, monkeypatch) -> None:
+        from src import config
+
+        monkeypatch.setattr(config.settings, "options_provider", "yahoo")
+        monkeypatch.setattr(config.settings, "tradier_api_key", "test-key")
+        assert isinstance(build_options_provider(), YahooOptionsProvider)
+
     def test_tradier_with_key(self, monkeypatch) -> None:
         from src import config
 

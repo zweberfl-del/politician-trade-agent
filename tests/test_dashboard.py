@@ -118,3 +118,40 @@ class TestDashboard:
         monkeypatch.setattr(options_module, "build_options_provider", EmptyProvider)
         resp = await client.get("/api/gex/NOPE")
         assert resp.status == 404
+
+
+class TestPwa:
+    """The dashboard installs as a phone app: manifest + SW + icons."""
+
+    async def test_index_wires_up_pwa(self, client) -> None:
+        body = await (await client.get("/")).text()
+        assert 'rel="manifest"' in body
+        assert "serviceWorker" in body
+        assert 'name="theme-color"' in body
+
+    async def test_manifest(self, client) -> None:
+        resp = await client.get("/manifest.webmanifest")
+        assert resp.status == 200
+        assert resp.content_type == "application/manifest+json"
+        manifest = await resp.json(content_type=None)
+        assert manifest["display"] == "standalone"
+        assert manifest["start_url"] == "/"
+        assert len(manifest["icons"]) >= 2
+
+    async def test_service_worker(self, client) -> None:
+        resp = await client.get("/sw.js")
+        assert resp.status == 200
+        assert resp.content_type == "application/javascript"
+        assert "fetch" in await resp.text()
+
+    async def test_svg_icon(self, client) -> None:
+        resp = await client.get("/icon.svg")
+        assert resp.status == 200
+        assert resp.content_type == "image/svg+xml"
+
+    async def test_png_icon_rendered(self, client) -> None:
+        resp = await client.get("/icon-192.png")
+        assert resp.status == 200
+        assert resp.content_type == "image/png"
+        body = await resp.read()
+        assert body.startswith(b"\x89PNG")

@@ -43,9 +43,10 @@ class Settings(BaseSettings):
     flow_watchlist: str = "SPY,QQQ,IWM,AAPL,MSFT,NVDA,AMZN,META,TSLA,GOOGL"
     flow_min_premium_usd: float = 250_000.0
     flow_poll_minutes: int = 10
-    # Chain source: "yahoo" (delayed ~15 min, no key) or "tradier"
-    # (real-time OPRA quotes with a brokerage-account key).
-    options_provider: str = "yahoo"
+    # Chain source: "auto" uses Tradier (real-time OPRA quotes with a free
+    # brokerage-account key) whenever TRADIER_API_KEY is set, otherwise
+    # Yahoo (delayed ~15 min, no key). Set "yahoo" or "tradier" to force one.
+    options_provider: str = "auto"
     tradier_api_key: str = ""
     tradier_base_url: str = "https://api.tradier.com"
 

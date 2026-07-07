@@ -19,10 +19,11 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 - Background **unusual-activity alerts** on a configurable watchlist during market hours, deduplicated per contract per day
 - `/gex <ticker>` — Black-Scholes gamma exposure: net/call/put GEX, largest strikes, zero-gamma estimate
 - `/darkpool <ticker>` — FINRA daily short-volume ratios and weekly dark pool (ATS) volume
-- Pluggable chain source: **Tradier** (real-time OPRA quotes with a free brokerage-account API key) or Yahoo (delayed ~15 min, no key) — set `OPTIONS_PROVIDER`
+- **Real-time by default**: setting `TRADIER_API_KEY` (free Tradier brokerage account) automatically upgrades every consumer — flow scanner, `/flow`, `/gex`, dashboard — to real-time OPRA quotes; without a key it falls back to Yahoo's delayed (~15 min) chains. Force either with `OPTIONS_PROVIDER`
 
-**Web dashboard**
-- `ENABLE_DASHBOARD=true` serves a responsive browser dashboard (works on mobile): live congressional trade feed, unusual options flow feed, top tickers, most active politicians, and per-ticker GEX / dark pool lookups — backed by JSON APIs (`/api/trades`, `/api/flow`, `/api/gex/{ticker}`, `/api/darkpool/{ticker}`, …)
+**Web dashboard & mobile app**
+- `ENABLE_DASHBOARD=true` serves a responsive browser dashboard: live congressional trade feed, unusual options flow feed, top tickers, most active politicians, and per-ticker GEX / dark pool lookups — backed by JSON APIs (`/api/trades`, `/api/flow`, `/api/gex/{ticker}`, `/api/darkpool/{ticker}`, …)
+- The dashboard is an installable **PWA**: open it on your phone and use "Add to Home Screen" to get a standalone app (own icon, no browser chrome) — `python -m src.main --dashboard-only` serves it without any Discord/broker credentials
 
 **Plumbing**
 - SQLite storage with full deduplication — no duplicate alerts or orders; first run backfills history silently instead of flooding the channel
@@ -34,18 +35,19 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 |---|---|---|
 | Congressional trade tracker | ✅ alerts, profiles, filters | Official House/Senate filings (free) |
 | Politician performance/portfolios | ✅ `/politician`, `/leaderboard` | Yahoo daily closes (free) |
-| Options flow feed & unusual alerts | ✅ `/flow` + watchlist alerts + dashboard feed | Tradier (real-time, free brokerage key) or Yahoo (delayed, keyless) |
+| Options flow feed & unusual alerts | ✅ `/flow` + watchlist alerts + dashboard feed | **Real-time by default** with a free Tradier brokerage key; Yahoo delayed fallback keyless |
 | Greeks / GEX | ✅ `/gex` + `/api/gex` | Black-Scholes from the configured chain source |
 | Dark pool | ✅ `/darkpool` + `/api/darkpool` | FINRA aggregates (daily short volume, weekly ATS) |
 | Alerts to Discord | ✅ native | — |
-| Web UI / mobile | ✅ responsive dashboard | Same database, served by the bot |
+| Web UI / mobile app | ✅ responsive dashboard, installable PWA (Add to Home Screen) | Same database, served by the bot |
 | Trade execution | ✅ Alpaca mirroring | UW has no execution at all |
 
-With `OPTIONS_PROVIDER=tradier` and a brokerage-account key (free account),
-options data is real-time — the same license-through-a-vendor model UW uses.
-Without any key everything still works on delayed/aggregate public data. UW's
-per-print dark-pool tape has no free equivalent; FINRA aggregates answer the
-same question (off-exchange share and short bias) at daily/weekly resolution.
+Set `TRADIER_API_KEY` (a free brokerage account) and options data is
+real-time everywhere, automatically — the same license-through-a-vendor
+model UW uses, at $0 instead of a subscription. Without any key everything
+still works on delayed/aggregate public data. UW's per-print dark-pool tape
+has no free equivalent; FINRA aggregates answer the same question
+(off-exchange share and short bias) at daily/weekly resolution.
 
 ## Prerequisites
 
