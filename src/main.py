@@ -56,6 +56,31 @@ async def run_once() -> None:
         )
 
 
+async def run_dashboard_only() -> None:
+    """Serve just the web dashboard — no Discord, no trading.
+
+    Useful for testing the UI (e.g. from a phone on the same network) before
+    any bot credentials exist. Data comes from whatever is already in the
+    database; run ``--once`` first to ingest some.
+    """
+    from src.config import settings
+    from src.storage.migrations import run_migrations
+    from src.web.dashboard import DashboardServer
+
+    await run_migrations(settings.database_path)
+    dashboard = DashboardServer(settings.database_path)
+    await dashboard.start()
+    log.info(
+        "Dashboard-only mode: open http://<this-machine's-LAN-IP>:%d from your "
+        "phone (same network). Ctrl+C to stop.",
+        settings.dashboard_port,
+    )
+    try:
+        await asyncio.Event().wait()  # serve until interrupted
+    finally:
+        await dashboard.stop()
+
+
 async def run():
     from src.config import settings
     from src.storage.migrations import run_migrations
@@ -161,11 +186,21 @@ def main():
         action="store_true",
         help="Run a single fetch+store cycle without Discord or trading, then exit",
     )
+    parser.add_argument(
+        "--dashboard-only",
+        action="store_true",
+        help="Serve only the web dashboard (no Discord/trading) until interrupted",
+    )
     args = parser.parse_args()
 
     setup_logging()
     try:
-        asyncio.run(run_once() if args.once else run())
+        if args.once:
+            asyncio.run(run_once())
+        elif args.dashboard_only:
+            asyncio.run(run_dashboard_only())
+        else:
+            asyncio.run(run())
     except KeyboardInterrupt:
         pass
 
