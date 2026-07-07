@@ -146,7 +146,19 @@ async def run():
 
         dashboard = DashboardServer(settings.database_path)
 
-    # 9. Start background tasks when bot is ready
+    # 9. Prediction-market scanner (Polymarket unusual bets)
+    prediction_scanner = None
+    if settings.enable_prediction_alerts:
+        from src.data.polymarket import PolymarketClient
+        from src.data.prediction_scanner import PredictionScanner
+
+        prediction_scanner = PredictionScanner(
+            client=PolymarketClient(),
+            bot=bot,
+            db_path=settings.database_path,
+        )
+
+    # 10. Start background tasks when bot is ready
     original_on_ready = bot.on_ready
 
     async def on_ready_with_poller():
@@ -154,17 +166,19 @@ async def run():
         await poller.start()
         if flow_scanner is not None:
             await flow_scanner.start()
+        if prediction_scanner is not None:
+            await prediction_scanner.start()
         if dashboard is not None:
             await dashboard.start()
 
     bot.on_ready = on_ready_with_poller
 
-    # 10. Validate config
+    # 11. Validate config
     if not settings.discord_bot_token:
         log.error("DISCORD_BOT_TOKEN is required. Set it in .env")
         sys.exit(1)
 
-    # 11. Run the bot (blocks until shutdown)
+    # 12. Run the bot (blocks until shutdown)
     log.info("Starting bot...")
     try:
         await bot.start(settings.discord_bot_token)
@@ -174,6 +188,8 @@ async def run():
         await poller.stop()
         if flow_scanner is not None:
             await flow_scanner.stop()
+        if prediction_scanner is not None:
+            await prediction_scanner.stop()
         if dashboard is not None:
             await dashboard.stop()
         await bot.close()

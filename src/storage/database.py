@@ -87,6 +87,27 @@ CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
 CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source, source_id);
 """
 
+# Added in schema v5 (see src/storage/migrations.py)
+_SCHEMA_V5_SQL = """
+CREATE TABLE IF NOT EXISTS prediction_events (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key          TEXT UNIQUE,
+    wallet             TEXT,
+    pseudonym          TEXT,
+    market_title       TEXT,
+    market_url         TEXT,
+    outcome            TEXT,
+    side               TEXT,
+    usd_size           REAL,
+    price              REAL,
+    signals            TEXT,
+    wallet_age_hours   REAL,
+    wallet_win_rate    REAL,
+    wallet_pnl_usd     REAL,
+    created_at         TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 # Added in schema v3 (see src/storage/migrations.py)
 _SCHEMA_V3_SQL = """
 CREATE TABLE IF NOT EXISTS flow_alerts (
@@ -133,6 +154,7 @@ async def init_db(db_path: str) -> str:
         await db.executescript(_SCHEMA_V2_SQL)
         await db.executescript(_SCHEMA_V3_SQL)
         await db.executescript(_SCHEMA_V4_SQL)
+        await db.executescript(_SCHEMA_V5_SQL)
         await db.commit()
     logger.info("Database initialised at %s", db_path)
     return db_path
@@ -548,6 +570,56 @@ async def get_recent_flow_events(db_path: str, limit: int = 25) -> list[dict]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM flow_events ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Prediction-market events
+# ---------------------------------------------------------------------------
+
+
+async def was_prediction_alerted(db_path: str, event_key: str) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM prediction_events WHERE event_key = ? LIMIT 1",
+            (event_key,),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def record_prediction_event(db_path: str, event: dict) -> None:
+    """Store one unusual prediction-market bet.
+
+    *event* keys: event_key, wallet, pseudonym, market_title, market_url,
+    outcome, side, usd_size, price, signals (JSON string),
+    wallet_age_hours, wallet_win_rate, wallet_pnl_usd.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO prediction_events (
+                event_key, wallet, pseudonym, market_title, market_url,
+                outcome, side, usd_size, price, signals,
+                wallet_age_hours, wallet_win_rate, wallet_pnl_usd
+            ) VALUES (
+                :event_key, :wallet, :pseudonym, :market_title, :market_url,
+                :outcome, :side, :usd_size, :price, :signals,
+                :wallet_age_hours, :wallet_win_rate, :wallet_pnl_usd
+            )
+            """,
+            event,
+        )
+        await db.commit()
+
+
+async def get_recent_prediction_events(db_path: str, limit: int = 25) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM prediction_events ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()

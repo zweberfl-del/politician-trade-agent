@@ -9,6 +9,7 @@ from src.storage.database import (
     _SCHEMA_V2_SQL,
     _SCHEMA_V3_SQL,
     _SCHEMA_V4_SQL,
+    _SCHEMA_V5_SQL,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ _MIGRATIONS: list[str] = [
     _SCHEMA_V2_SQL,  # v2 — politicians, kv_store, price_history, indexes
     _SCHEMA_V3_SQL,  # v3 — flow_alerts (options flow alert dedup)
     _SCHEMA_V4_SQL,  # v4 — flow_events (alert detail for dedup + dashboard)
+    _SCHEMA_V5_SQL,  # v5 — prediction_events (Polymarket unusual bets)
 ]
 
 

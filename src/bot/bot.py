@@ -7,7 +7,12 @@ import discord
 from discord import app_commands
 
 from src.config import settings
-from src.bot.embeds import flow_alert_embed, trade_alert_embed, weekly_digest_embed
+from src.bot.embeds import (
+    flow_alert_embed,
+    prediction_alert_embed,
+    trade_alert_embed,
+    weekly_digest_embed,
+)
 from src.storage.database import get_followers
 
 if TYPE_CHECKING:
@@ -103,6 +108,18 @@ class TradeBot(discord.Client):
             await channel.send(embed=flow_alert_embed(hit))
         else:
             log.warning("Flow channel %s unavailable; skipping", settings.alert_channel_id)
+
+    async def send_prediction_alert(self, bet) -> None:
+        """Post an unusual prediction-market bet to the alert channel."""
+        if not settings.alert_channel_id:
+            return
+        channel = self.get_channel(settings.alert_channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await channel.send(embed=prediction_alert_embed(bet))
+        else:
+            log.warning(
+                "Prediction channel %s unavailable; skipping", settings.alert_channel_id
+            )
 
     async def send_weekly_digest(
         self, top_tickers: list[dict], most_active: list[dict]

@@ -21,6 +21,15 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 - `/darkpool <ticker>` — FINRA daily short-volume ratios and weekly dark pool (ATS) volume
 - **Real-time by default**: setting `TRADIER_API_KEY` (free Tradier brokerage account) automatically upgrades every consumer — flow scanner, `/flow`, `/gex`, dashboard — to real-time OPRA quotes; without a key it falls back to Yahoo's delayed (~15 min) chains. Force either with `OPTIONS_PROVIDER`
 
+**Prediction markets (Polymarket)**
+- `ENABLE_PREDICTION_ALERTS=true` watches Polymarket's public trade feed for **unusual bets**, profiling the wallet behind every large fill:
+  - **Fresh wallet** — account created (or first active) within ~48h, or barely used, suddenly placing a `PREDICTION_MIN_BET_USD`+ bet
+  - **Sharp wallet** — an account with an outlier win record (≥75% over 8+ resolved positions, or $100K+ lifetime PnL) placing size
+  - **Longshot conviction** — big money buying an outcome priced ≤15c
+  - **Whale size** — bets ≥5× the alert floor
+- Alerts show the wallet's age, win/loss record, and lifetime PnL; `/polymarket` lists recent hits, and the dashboard has a live panel (`/api/prediction`)
+- Uses Polymarket's free public data API — no key, no wallet needed
+
 **Web dashboard & mobile app**
 - `ENABLE_DASHBOARD=true` serves a responsive browser dashboard: live congressional trade feed, unusual options flow feed, top tickers, most active politicians, and per-ticker GEX / dark pool lookups — backed by JSON APIs (`/api/trades`, `/api/flow`, `/api/gex/{ticker}`, `/api/darkpool/{ticker}`, …)
 - The dashboard is an installable **PWA**: open it on your phone and use "Add to Home Screen" to get a standalone app (own icon, no browser chrome) — `python -m src.main --dashboard-only` serves it without any Discord/broker credentials
@@ -41,6 +50,7 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 | Alerts to Discord | ✅ native | — |
 | Web UI / mobile app | ✅ responsive dashboard, installable PWA (Add to Home Screen) | Same database, served by the bot |
 | Trade execution | ✅ Alpaca mirroring | UW has no execution at all |
+| Prediction-market wallet forensics | ✅ `/polymarket` + alerts (UW has nothing comparable) | Polymarket public data API (free) |
 
 Set `TRADIER_API_KEY` (a free brokerage account) and options data is
 real-time everywhere, automatically — the same license-through-a-vendor

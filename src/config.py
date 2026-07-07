@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 8080
 
+    # --- Prediction markets (Polymarket) ---
+    # Watch the public trade feed for unusual bets: fresh wallets, proven
+    # winners, and longshot conviction placing size.
+    enable_prediction_alerts: bool = False
+    prediction_min_bet_usd: float = 10_000.0
+    prediction_poll_minutes: int = 5
+
     # --- Alert filters ---
     # Minimum disclosed amount (lower bound of the range) for channel alerts.
     alert_min_amount_usd: float = 0.0

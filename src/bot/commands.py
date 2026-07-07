@@ -27,6 +27,7 @@ from src.bot.embeds import (
     flow_summary_embed,
     gex_embed,
     darkpool_embed,
+    prediction_list_embed,
 )
 
 if TYPE_CHECKING:
@@ -323,6 +324,19 @@ async def setup_commands(
             )
             return
         await interaction.followup.send(embed=darkpool_embed(ticker, short_days, ats_weeks))
+
+    # -- /polymarket ------------------------------------------------------------
+
+    @tree.command(
+        name="polymarket",
+        description="Recent unusual prediction-market bets (fresh/sharp wallets, big size)",
+    )
+    async def polymarket_cmd(interaction: discord.Interaction) -> None:
+        from src.storage.database import get_recent_prediction_events
+
+        await interaction.response.defer()
+        events = await get_recent_prediction_events(settings.database_path)
+        await interaction.followup.send(embed=prediction_list_embed(events))
 
     # -- /settings --------------------------------------------------------
 

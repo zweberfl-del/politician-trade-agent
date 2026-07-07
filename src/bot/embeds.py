@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 
@@ -451,6 +452,89 @@ def darkpool_embed(ticker: str, short_days: list, ats_weeks: list[dict]) -> disc
         embed.add_field(name="Dark Pool (ATS) Weekly Volume", value="\n".join(lines), inline=False)
 
     embed.set_footer(text="FINRA public data: daily short volume, weekly ATS aggregates")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# Prediction-market embeds
+# ---------------------------------------------------------------------------
+
+_SIGNAL_LABELS = {
+    "fresh-wallet": "🆕 Fresh wallet",
+    "sharp-wallet": "🎯 Proven winner",
+    "longshot-conviction": "🎲 Longshot conviction",
+    "whale-size": "🐋 Whale size",
+}
+
+
+def prediction_alert_embed(bet) -> discord.Embed:
+    """Alert for one unusual prediction-market bet (analysis.prediction.UnusualBet)."""
+    t, p = bet.trade, bet.profile
+    embed = discord.Embed(
+        title=f"Unusual Polymarket Bet — {t.market_title or 'Unknown market'}",
+        color=_COLOR_GOLD,
+    )
+    if t.market_url:
+        embed.url = t.market_url
+
+    embed.add_field(
+        name="Bet",
+        value=f"{t.side} **{t.outcome or '?'}** @ {t.price * 100:.0f}c",
+        inline=True,
+    )
+    embed.add_field(name="Size", value=_fmt_premium(t.usd_size), inline=True)
+    who = t.pseudonym or f"{t.wallet[:6]}…{t.wallet[-4:]}"
+    embed.add_field(name="Wallet", value=who, inline=True)
+
+    embed.add_field(
+        name="Signals",
+        value="\n".join(_SIGNAL_LABELS.get(s, s) for s in bet.signals),
+        inline=False,
+    )
+
+    profile_bits = []
+    age = p.age_hours()
+    if age is not None:
+        profile_bits.append(
+            f"{age:.0f}h old" if age < 72 else f"{age / 24:.0f}d old"
+        )
+    if p.resolved_positions:
+        profile_bits.append(
+            f"{p.wins}-{p.losses} record ({p.win_rate * 100:.0f}%)"
+        )
+    if abs(p.total_pnl_usd) >= 1:
+        profile_bits.append(f"{_fmt_premium(p.total_pnl_usd)} lifetime PnL")
+    if profile_bits:
+        embed.add_field(name="Wallet Profile", value=" | ".join(profile_bits), inline=False)
+
+    embed.set_footer(text="Polymarket public data")
+    return embed
+
+
+def prediction_list_embed(events: list[dict]) -> discord.Embed:
+    """Answer for /polymarket: recent unusual bets from the database."""
+    embed = discord.Embed(title="Unusual Polymarket Activity", color=_COLOR_GOLD)
+    if not events:
+        embed.description = (
+            "No unusual bets recorded yet. The scanner flags large bets from "
+            "fresh wallets, proven winners, and longshot conviction."
+        )
+        return embed
+
+    lines = []
+    for e in events[:10]:
+        try:
+            signals = ", ".join(json.loads(e.get("signals") or "[]"))
+        except ValueError:
+            signals = ""
+        who = e.get("pseudonym") or (e.get("wallet") or "")[:10]
+        lines.append(
+            f"**{_fmt_premium(e.get('usd_size') or 0)}** {e.get('side', '')} "
+            f"{e.get('outcome', '?')} @ {(e.get('price') or 0) * 100:.0f}c — "
+            f"{e.get('market_title', '')[:60]}\n"
+            f"    {who} ({signals})"
+        )
+    embed.description = "\n".join(lines)[:4000]
     return embed
 
 

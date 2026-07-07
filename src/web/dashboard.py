@@ -96,6 +96,7 @@ class DashboardServer:
                 web.get("/icon-{size:\\d+}.png", self.icon_png),
                 web.get("/api/trades", self.api_trades),
                 web.get("/api/flow", self.api_flow),
+                web.get("/api/prediction", self.api_prediction),
                 web.get("/api/top", self.api_top),
                 web.get("/api/active", self.api_active),
                 web.get("/api/gex/{ticker}", self.api_gex),
@@ -160,6 +161,14 @@ class DashboardServer:
 
         limit = _bounded_int(request.query.get("limit"), default=25)
         return web.json_response(await get_recent_flow_events(self.db_path, limit=limit))
+
+    async def api_prediction(self, request: web.Request) -> web.Response:
+        from src.storage.database import get_recent_prediction_events
+
+        limit = _bounded_int(request.query.get("limit"), default=25)
+        return web.json_response(
+            await get_recent_prediction_events(self.db_path, limit=limit)
+        )
 
     async def api_top(self, request: web.Request) -> web.Response:
         from src.storage.database import get_top_tickers
@@ -270,6 +279,7 @@ _INDEX_HTML = """<!DOCTYPE html>
 <div class="grid">
   <div class="panel"><h2>Congressional Trades</h2><div id="trades">loading…</div></div>
   <div class="panel"><h2>Unusual Options Flow</h2><div id="flow">loading…</div></div>
+  <div class="panel"><h2>Unusual Polymarket Bets</h2><div id="prediction">loading…</div></div>
   <div class="panel"><h2>Top Tickers (30d)</h2><div id="top">loading…</div></div>
   <div class="panel"><h2>Most Active Politicians (30d)</h2><div id="active">loading…</div></div>
   <div class="panel">
@@ -292,8 +302,8 @@ function table(rows, cols) {
 }
 async function load() {
   try {
-    const [trades, flow, top, active] = await Promise.all(
-      ['/api/trades','/api/flow','/api/top','/api/active'].map(u => fetch(u).then(r => r.json())));
+    const [trades, flow, prediction, top, active] = await Promise.all(
+      ['/api/trades','/api/flow','/api/prediction','/api/top','/api/active'].map(u => fetch(u).then(r => r.json())));
     $('trades').innerHTML = table(trades, [
       {h:'Politician', f:r=>esc(r.politician_name)},
       {h:'Ticker', f:r=>esc(r.ticker||'—')},
@@ -305,6 +315,12 @@ async function load() {
       {h:'Contract', f:r=>esc(r.option_type.toUpperCase()+' $'+r.strike+' '+r.expiration), cls:r=>r.sentiment},
       {h:'Premium', f:r=>fmt$(r.premium_usd)},
       {h:'Vol/OI', f:r=>r.vol_oi_ratio.toFixed(1)+'x'}]);
+    $('prediction').innerHTML = table(prediction, [
+      {h:'Market', f:r=>esc((r.market_title||'?').slice(0,40))},
+      {h:'Bet', f:r=>esc(r.side+' '+(r.outcome||'?')+' @ '+Math.round((r.price||0)*100)+'c')},
+      {h:'Size', f:r=>fmt$(r.usd_size||0)},
+      {h:'Wallet', f:r=>esc(r.pseudonym||String(r.wallet||'').slice(0,10))},
+      {h:'Signals', f:r=>esc(JSON.parse(r.signals||'[]').join(', '))}]);
     $('top').innerHTML = table(top, [
       {h:'Ticker', f:r=>esc(r.ticker)},
       {h:'Trades', f:r=>r.trade_count},

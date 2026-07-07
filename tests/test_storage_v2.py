@@ -51,7 +51,7 @@ class TestMigrations:
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute("PRAGMA user_version")
             version = (await cursor.fetchone())[0]
-        assert version == 4
+        assert version == 5
 
     async def test_rerun_is_idempotent(self, db_path) -> None:
         await run_migrations(db_path)
