@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 
 from src.config import settings
-from src.bot.embeds import trade_alert_embed, weekly_digest_embed
+from src.bot.embeds import flow_alert_embed, trade_alert_embed, weekly_digest_embed
 from src.storage.database import get_followers
 
 if TYPE_CHECKING:
@@ -93,6 +93,16 @@ class TradeBot(discord.Client):
                 )
             except Exception:
                 log.debug("Could not DM user %s", user_id)
+
+    async def send_flow_alert(self, hit) -> None:
+        """Post an unusual-options-activity alert to the alert channel."""
+        if not settings.alert_channel_id:
+            return
+        channel = self.get_channel(settings.alert_channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await channel.send(embed=flow_alert_embed(hit))
+        else:
+            log.warning("Flow channel %s unavailable; skipping", settings.alert_channel_id)
 
     async def send_weekly_digest(
         self, top_tickers: list[dict], most_active: list[dict]

@@ -1,9 +1,10 @@
 # Politician Trade Agent
 
-A Discord bot that tracks US congressional stock trades and optionally mirrors them through a brokerage account.
+A Discord market-data terminal: congressional trade tracking with optional brokerage mirroring, plus options flow, gamma exposure, and dark pool analytics — built entirely on free public data sources.
 
 ## Features
 
+**Congressional trading**
 - Polls official disclosure sources (House Clerk, Senate EFD) and parses **per-trade detail** — ticker, buy/sell, dates, amount range, owner — from e-filed PTRs (Senate HTML pages, House PDFs)
 - Posts trade alerts to a Discord channel, with party/state tags and disclosure-lag stats
 - Configurable alert filters: minimum amount, ticker watchlist, party
@@ -12,8 +13,31 @@ A Discord bot that tracks US congressional stock trades and optionally mirrors t
 - Party/state/committee enrichment from the free [congress-legislators](https://github.com/unitedstates/congress-legislators) dataset, plus name autocomplete in commands
 - Optional weekly digest post (most-traded tickers, most active politicians)
 - Optional auto-trading: mirror politician trades through Alpaca (paper or live)
+
+**Options flow & market data**
+- `/flow <ticker>` — call/put volume, put/call ratio, premium totals, and the most unusual contracts (big premium, volume far above open interest)
+- Background **unusual-activity alerts** on a configurable watchlist during market hours, deduplicated per contract per day
+- `/gex <ticker>` — Black-Scholes gamma exposure: net/call/put GEX, largest strikes, zero-gamma estimate
+- `/darkpool <ticker>` — FINRA daily short-volume ratios and weekly dark pool (ATS) volume
+
+**Plumbing**
 - SQLite storage with full deduplication — no duplicate alerts or orders; first run backfills history silently instead of flooding the channel
 - HTTP retries with backoff and an ETag-aware disk cache for the House disclosure ZIP
+
+## How this compares to Unusual Whales
+
+| Unusual Whales feature | Here | Data source & caveat |
+|---|---|---|
+| Congressional trade tracker | ✅ alerts, profiles, filters | Official House/Senate filings (free) |
+| Politician performance/portfolios | ✅ `/politician`, `/leaderboard` | Yahoo daily closes (free) |
+| Options flow feed & unusual alerts | ✅ `/flow` + watchlist alerts | Yahoo chains, **~15-min delayed** |
+| Greeks / GEX | ✅ `/gex` | Computed via Black-Scholes from delayed chains |
+| Dark pool | ✅ `/darkpool` | FINRA aggregates (daily short volume, weekly ATS) — not per-print tape |
+| Trade execution | ✅ Alpaca mirroring | UW has no execution at all |
+| Real-time tick-level feeds, web UI, mobile app | ❌ | Requires licensed OPRA/tape data; the `OptionsProvider` interface accepts a licensed feed drop-in |
+
+The feature surface matches; the difference is data latency (free delayed/aggregate
+public data vs licensed real-time feeds) and the UI being Discord instead of a web app.
 
 ## Prerequisites
 

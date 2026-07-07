@@ -87,6 +87,16 @@ CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
 CREATE INDEX IF NOT EXISTS idx_trades_source ON trades(source, source_id);
 """
 
+# Added in schema v3 (see src/storage/migrations.py)
+_SCHEMA_V3_SQL = """
+CREATE TABLE IF NOT EXISTS flow_alerts (
+    contract_key       TEXT,
+    alert_date         TEXT,
+    created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contract_key, alert_date)
+);
+"""
+
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
@@ -100,6 +110,7 @@ async def init_db(db_path: str) -> str:
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(_SCHEMA_SQL)
         await db.executescript(_SCHEMA_V2_SQL)
+        await db.executescript(_SCHEMA_V3_SQL)
         await db.commit()
     logger.info("Database initialised at %s", db_path)
     return db_path
@@ -467,6 +478,29 @@ async def upsert_price_history(db_path: str, ticker: str, history: dict[str, flo
             "INSERT INTO price_history (ticker, date, close) VALUES (?, ?, ?) "
             "ON CONFLICT(ticker, date) DO UPDATE SET close = excluded.close",
             [(ticker.upper(), day, close) for day, close in history.items()],
+        )
+        await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Flow alert dedup
+# ---------------------------------------------------------------------------
+
+
+async def was_flow_alerted(db_path: str, contract_key: str, alert_date: str) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM flow_alerts WHERE contract_key = ? AND alert_date = ?",
+            (contract_key, alert_date),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def record_flow_alert(db_path: str, contract_key: str, alert_date: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO flow_alerts (contract_key, alert_date) VALUES (?, ?)",
+            (contract_key, alert_date),
         )
         await db.commit()
 

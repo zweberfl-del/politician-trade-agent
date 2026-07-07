@@ -102,21 +102,35 @@ async def run():
         interval_minutes=settings.poll_interval_minutes,
     )
 
-    # 7. Start poller when bot is ready
+    # 7. Options flow scanner (unusual-activity alerts)
+    flow_scanner = None
+    if settings.enable_flow_alerts:
+        from src.data.flow_scanner import FlowScanner
+        from src.data.options import YahooOptionsProvider
+
+        flow_scanner = FlowScanner(
+            provider=YahooOptionsProvider(),
+            bot=bot,
+            db_path=settings.database_path,
+        )
+
+    # 8. Start background tasks when bot is ready
     original_on_ready = bot.on_ready
 
     async def on_ready_with_poller():
         await original_on_ready()
         await poller.start()
+        if flow_scanner is not None:
+            await flow_scanner.start()
 
     bot.on_ready = on_ready_with_poller
 
-    # 8. Validate config
+    # 9. Validate config
     if not settings.discord_bot_token:
         log.error("DISCORD_BOT_TOKEN is required. Set it in .env")
         sys.exit(1)
 
-    # 9. Run the bot (blocks until shutdown)
+    # 10. Run the bot (blocks until shutdown)
     log.info("Starting bot...")
     try:
         await bot.start(settings.discord_bot_token)
@@ -124,6 +138,8 @@ async def run():
         log.info("Shutting down...")
     finally:
         await poller.stop()
+        if flow_scanner is not None:
+            await flow_scanner.stop()
         await bot.close()
 
 

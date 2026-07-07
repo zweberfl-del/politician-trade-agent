@@ -329,6 +329,132 @@ def weekly_digest_embed(
 
 
 # ---------------------------------------------------------------------------
+# Options flow embeds
+# ---------------------------------------------------------------------------
+
+
+def _fmt_premium(value: float) -> str:
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.0f}K"
+    return f"${value:,.0f}"
+
+
+def flow_alert_embed(hit) -> discord.Embed:
+    """Alert for one unusual options contract (analysis.flow.UnusualActivity)."""
+    c = hit.contract
+    color = _COLOR_GREEN if hit.sentiment == "bullish" else _COLOR_RED
+    embed = discord.Embed(
+        title=(
+            f"Unusual Options Activity — {c.ticker} "
+            f"{c.option_type.upper()} ${c.strike:g} {c.expiration:%m/%d/%y}"
+        ),
+        color=color,
+    )
+    embed.add_field(name="Premium", value=_fmt_premium(c.premium_notional), inline=True)
+    embed.add_field(name="Volume", value=f"{c.volume:,}", inline=True)
+    embed.add_field(name="Open Interest", value=f"{c.open_interest:,}", inline=True)
+    embed.add_field(name="Vol/OI", value=f"{hit.vol_oi_ratio:.1f}x", inline=True)
+    embed.add_field(name="Spot", value=f"${hit.spot:,.2f}", inline=True)
+    embed.add_field(
+        name="Moneyness",
+        value=f"{hit.otm_pct:+.1f}% {'OTM' if hit.otm_pct >= 0 else 'ITM'}",
+        inline=True,
+    )
+    embed.set_footer(text=f"{hit.sentiment.title()} | delayed data (~15 min)")
+    return embed
+
+
+def flow_summary_embed(ticker: str, hits: list, sentiment: dict) -> discord.Embed:
+    """Answer for /flow: sentiment snapshot plus the top unusual contracts."""
+    embed = discord.Embed(title=f"Options Flow — {ticker.upper()}", color=_COLOR_BLUE)
+    embed.add_field(
+        name="Call / Put Volume",
+        value=f"{sentiment['call_volume']:,} / {sentiment['put_volume']:,}",
+        inline=True,
+    )
+    embed.add_field(
+        name="Put/Call Ratio", value=f"{sentiment['put_call_ratio']:.2f}", inline=True
+    )
+    embed.add_field(
+        name="Premium C/P",
+        value=f"{_fmt_premium(sentiment['call_premium'])} / "
+        f"{_fmt_premium(sentiment['put_premium'])}",
+        inline=True,
+    )
+
+    if hits:
+        lines = []
+        for hit in hits[:8]:
+            c = hit.contract
+            lines.append(
+                f"{c.option_type.upper()} ${c.strike:g} {c.expiration:%m/%d} — "
+                f"{_fmt_premium(c.premium_notional)} prem, {c.volume:,} vol "
+                f"({hit.vol_oi_ratio:.1f}x OI)"
+            )
+        embed.add_field(name="Unusual Contracts", value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(
+            name="Unusual Contracts", value="Nothing above thresholds right now.", inline=False
+        )
+    embed.set_footer(text="Delayed data (~15 min)")
+    return embed
+
+
+def gex_embed(profile) -> discord.Embed:
+    """Answer for /gex (analysis.gex.GexProfile)."""
+    regime = "positive (vol-dampening)" if profile.net_gex >= 0 else "negative (vol-amplifying)"
+    embed = discord.Embed(
+        title=f"Gamma Exposure — {profile.ticker}",
+        description=f"Dealer gamma regime: **{regime}**",
+        color=_COLOR_GOLD,
+    )
+    embed.add_field(name="Net GEX / 1% move", value=_fmt_premium(profile.net_gex), inline=True)
+    embed.add_field(name="Call GEX", value=_fmt_premium(profile.call_gex), inline=True)
+    embed.add_field(name="Put GEX", value=_fmt_premium(profile.put_gex), inline=True)
+    embed.add_field(name="Spot", value=f"${profile.spot:,.2f}", inline=True)
+
+    flip = profile.zero_gamma_estimate
+    if flip is not None:
+        embed.add_field(name="Zero-Gamma (est.)", value=f"${flip:g}", inline=True)
+
+    strikes = profile.top_strikes()
+    if strikes:
+        lines = [f"${strike:g}: {_fmt_premium(exposure)}" for strike, exposure in strikes]
+        embed.add_field(name="Largest Strikes", value="\n".join(lines), inline=False)
+    embed.set_footer(text="Black-Scholes from delayed chains | dealer-positioning convention")
+    return embed
+
+
+def darkpool_embed(ticker: str, short_days: list, ats_weeks: list[dict]) -> discord.Embed:
+    """Answer for /darkpool: FINRA short volume + ATS weekly aggregates."""
+    embed = discord.Embed(title=f"Off-Exchange Activity — {ticker.upper()}", color=_COLOR_PURPLE)
+
+    if short_days:
+        lines = [
+            f"{d.day:%m/%d}: {d.short_ratio * 100:.0f}% short "
+            f"({d.short_volume:,} / {d.total_volume:,})"
+            for d in short_days
+        ]
+        embed.add_field(name="Daily Short Volume (FINRA)", value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(
+            name="Daily Short Volume (FINRA)", value="No recent data.", inline=False
+        )
+
+    if ats_weeks:
+        lines = [
+            f"{w['week']}: {w['shares']:,} shares in {w['trades']:,} trades"
+            for w in ats_weeks
+        ]
+        embed.add_field(name="Dark Pool (ATS) Weekly Volume", value="\n".join(lines), inline=False)
+
+    embed.set_footer(text="FINRA public data: daily short volume, weekly ATS aggregates")
+    return embed
+
+
+# ---------------------------------------------------------------------------
 # Settings embed
 # ---------------------------------------------------------------------------
 

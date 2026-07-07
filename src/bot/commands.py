@@ -24,6 +24,9 @@ from src.bot.embeds import (
     settings_embed,
     politician_profile_embed,
     leaderboard_embed,
+    flow_summary_embed,
+    gex_embed,
+    darkpool_embed,
 )
 
 if TYPE_CHECKING:
@@ -253,6 +256,73 @@ async def setup_commands(
             return
 
         await interaction.followup.send(embed=leaderboard_embed(board, days))
+
+    # -- /flow <ticker> -------------------------------------------------------
+
+    @tree.command(
+        name="flow",
+        description="Options flow snapshot: sentiment and unusual contracts",
+    )
+    @app_commands.describe(ticker="Underlying ticker, e.g. SPY")
+    async def flow_cmd(interaction: discord.Interaction, ticker: str) -> None:
+        from src.analysis.flow import chain_sentiment, detect_unusual_activity
+        from src.data.options import YahooOptionsProvider
+
+        await interaction.response.defer()
+        chain = await YahooOptionsProvider().fetch_chain(ticker)
+        if chain is None or not chain.contracts:
+            await interaction.followup.send(
+                f"No options chain available for **{ticker.upper()}**.", ephemeral=True
+            )
+            return
+        hits = detect_unusual_activity(
+            chain, min_premium_usd=settings.flow_min_premium_usd
+        )
+        await interaction.followup.send(
+            embed=flow_summary_embed(ticker, hits, chain_sentiment(chain))
+        )
+
+    # -- /gex <ticker> --------------------------------------------------------
+
+    @tree.command(
+        name="gex",
+        description="Gamma exposure profile for a ticker",
+    )
+    @app_commands.describe(ticker="Underlying ticker, e.g. SPY")
+    async def gex_cmd(interaction: discord.Interaction, ticker: str) -> None:
+        from src.analysis.gex import compute_gex
+        from src.data.options import YahooOptionsProvider
+
+        await interaction.response.defer()
+        chain = await YahooOptionsProvider().fetch_chain(ticker)
+        if chain is None or not chain.contracts or chain.spot <= 0:
+            await interaction.followup.send(
+                f"No options chain available for **{ticker.upper()}**.", ephemeral=True
+            )
+            return
+        await interaction.followup.send(embed=gex_embed(compute_gex(chain)))
+
+    # -- /darkpool <ticker> -----------------------------------------------------
+
+    @tree.command(
+        name="darkpool",
+        description="Off-exchange activity: FINRA short volume and dark pool (ATS) data",
+    )
+    @app_commands.describe(ticker="Ticker, e.g. AAPL")
+    async def darkpool_cmd(interaction: discord.Interaction, ticker: str) -> None:
+        from src.data.darkpool import DarkPoolService
+
+        await interaction.response.defer()
+        service = DarkPoolService()
+        short_days = await service.get_short_volume(ticker)
+        ats_weeks = await service.get_ats_weekly(ticker)
+        if not short_days and not ats_weeks:
+            await interaction.followup.send(
+                f"No off-exchange data available for **{ticker.upper()}** right now.",
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(embed=darkpool_embed(ticker, short_days, ats_weeks))
 
     # -- /settings --------------------------------------------------------
 

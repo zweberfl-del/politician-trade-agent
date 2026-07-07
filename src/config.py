@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # unitedstates/congress-legislators dataset.
     enable_enrichment: bool = True
 
+    # --- Options flow / market data ---
+    # Scan options chains for unusual activity and post alerts (market hours).
+    enable_flow_alerts: bool = False
+    flow_watchlist: str = "SPY,QQQ,IWM,AAPL,MSFT,NVDA,AMZN,META,TSLA,GOOGL"
+    flow_min_premium_usd: float = 250_000.0
+    flow_poll_minutes: int = 10
+
     # --- Alert filters ---
     # Minimum disclosed amount (lower bound of the range) for channel alerts.
     alert_min_amount_usd: float = 0.0
@@ -63,6 +70,9 @@ class Settings(BaseSettings):
 
     def watchlist_tickers(self) -> set[str]:
         return {t.strip().upper() for t in self.alert_ticker_watchlist.split(",") if t.strip()}
+
+    def flow_watchlist_tickers(self) -> list[str]:
+        return [t.strip().upper() for t in self.flow_watchlist.split(",") if t.strip()]
 
     def party_filter(self) -> set[str]:
         return {p.strip().upper()[:1] for p in self.alert_party_filter.split(",") if p.strip()}
