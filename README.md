@@ -115,6 +115,10 @@ python -m src.main --once
 | `/top [days]` | Show the most-traded tickers by politicians (default: 30 days) |
 | `/politician <name>` | Profile: totals, top tickers, committees, recent trades |
 | `/leaderboard [days]` | Rank politicians by avg return since disclosure vs SPY |
+| `/flow <ticker>` | Options flow snapshot: sentiment + unusual contracts |
+| `/gex <ticker>` | Gamma exposure profile (net/call/put, strikes, zero-gamma) |
+| `/darkpool <ticker>` | FINRA short volume + weekly dark pool (ATS) data |
+| `/polymarket` | Recent unusual prediction-market bets |
 | `/follow <politician>` | Get DM alerts when a politician discloses a new trade |
 | `/unfollow <politician>` | Stop receiving DM alerts for a politician |
 | `/following` | List the politicians you are currently following |
@@ -139,6 +143,20 @@ All configuration is done through environment variables (or a `.env` file).
 | `PARSE_FILING_DETAILS` | No | `true` | Fetch per-trade detail from PTR pages/PDFs |
 | `MAX_FILINGS_PER_CYCLE` | No | `25` | Max new filings detail-fetched per source per cycle |
 | `ENABLE_ENRICHMENT` | No | `true` | Party/state/committee enrichment (weekly refresh) |
+| `ENABLE_FLOW_ALERTS` | No | `false` | Scan options chains for unusual activity (market hours) |
+| `FLOW_WATCHLIST` | No | `SPY,QQQ,…` | Tickers the flow scanner watches |
+| `FLOW_MIN_PREMIUM_USD` | No | `250000` | Premium floor for a flow alert |
+| `FLOW_POLL_MINUTES` | No | `10` | Flow scan interval |
+| `OPTIONS_PROVIDER` | No | `auto` | `auto` = Tradier real-time when key set, else Yahoo delayed |
+| `TRADIER_API_KEY` | No | -- | Free brokerage-account key → real-time OPRA quotes |
+| `TRADIER_BASE_URL` | No | `https://api.tradier.com` | Use sandbox URL for sandbox keys |
+| `ENABLE_PREDICTION_ALERTS` | No | `false` | Polymarket unusual-bet scanner (24/7) |
+| `PREDICTION_MIN_BET_USD` | No | `10000` | Bet-size floor for prediction alerts |
+| `PREDICTION_POLL_MINUTES` | No | `5` | Prediction scan interval |
+| `ENABLE_DASHBOARD` | No | `false` | Serve the web dashboard / phone PWA |
+| `DASHBOARD_HOST` | No | `0.0.0.0` | Dashboard bind address |
+| `DASHBOARD_PORT` | No | `8080` | Dashboard port |
+| `DASHBOARD_AUTH_TOKEN` | No | -- | Shared secret gating the dashboard + APIs (empty = open) |
 | `ALERT_MIN_AMOUNT_USD` | No | `0` | Suppress channel alerts below this disclosed amount |
 | `ALERT_TICKER_WATCHLIST` | No | -- | Comma-separated tickers to alert on (empty = all) |
 | `ALERT_PARTY_FILTER` | No | -- | Comma-separated party codes D,R,I (empty = all) |
