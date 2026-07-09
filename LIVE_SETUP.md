@@ -4,6 +4,11 @@ How to take this project from a fresh clone to a running live test, in order,
 with a verification gate at every step. Nothing here requires paid services;
 the two optional keys (Tradier, Alpaca) come from free accounts.
 
+**Time expectation:** the setup phases (0–5) take an afternoon, but the full
+path to live money is roughly 4–6 weeks: a trading day plus a tuning week for
+the scanners (Phase 6) and at least two clean weeks of paper trading (Phase 7)
+before Phase 9.
+
 **The golden rule:** every external integration in this codebase was built and
 unit-tested against documented data formats, but the government/market APIs
 could not be reached from the development sandbox. The phases below are
@@ -17,7 +22,7 @@ warning rather than a crash, so failures are visible but not fatal.
 
 - **Python 3.11+** (`python --version`)
 - A machine that can stay on for the duration of the test (your PC is fine
-  for the dry run; see Phase 7 for always-on hosting)
+  for the dry run; see Phase 8 for always-on hosting)
 - Network access to: `disclosures-clerk.house.gov`, `efdsearch.senate.gov`,
   `unitedstates.github.io`, `query1.finance.yahoo.com`,
   `cdn.finra.org`, `api.finra.org`, `data-api.polymarket.com`,
@@ -26,7 +31,6 @@ warning rather than a crash, so failures are visible but not fatal.
 ```bash
 git clone <your-repo-url>
 cd politician-trade-agent
-git checkout claude/agent-usability-eval-f9h3tc   # or main once merged
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev,trading]"
@@ -61,29 +65,16 @@ python -m src.main --once
 - *Senate returns nothing:* the EFD agreement handshake is session/IP
   sensitive. Re-run once; if it persists, save the warning traceback.
 - *House PDFs parse to 0 rows:* PDF layouts vary. The filing URL is in each
-  warning — send a failing PDF link so the regex can be extended.
+  warning — open a GitHub issue with a failing PDF link so the regex can be
+  extended.
 - Run `--once` a second time: `new=0` expected (dedup proof).
 
 ## Phase 2 — Market data smoke test (still no credentials)
 
+From the repository root (works the same on Windows):
+
 ```bash
-python - <<'EOF'
-import asyncio
-from src.data.options import YahooOptionsProvider
-from src.data.darkpool import DarkPoolService
-from src.data.polymarket import PolymarketClient
-
-async def main():
-    chain = await YahooOptionsProvider().fetch_chain("SPY")
-    print("Yahoo chain:", "OK," if chain and chain.contracts else "FAILED,",
-          len(chain.contracts) if chain else 0, "contracts, spot", chain.spot if chain else "-")
-    short = await DarkPoolService().get_short_volume("AAPL", days=2)
-    print("FINRA short volume:", "OK," if short else "FAILED,", [f"{d.day}:{d.short_ratio:.0%}" for d in short])
-    trades = await PolymarketClient().get_recent_trades(limit=25)
-    print("Polymarket feed:", "OK," if trades else "FAILED,", len(trades), "trades")
-
-asyncio.run(main())
-EOF
+python scripts/smoke_test.py
 ```
 
 **Pass criteria:** all three print OK.
@@ -92,7 +83,8 @@ EOF
   Tradier (Phase 5) and the problem disappears.
 - *Polymarket FAILED or fields look wrong:* the public data API is
   undocumented; if parse warnings appear, capture one raw response
-  (`curl 'https://data-api.polymarket.com/trades?limit=2'`) for a field fix.
+  (`curl 'https://data-api.polymarket.com/trades?limit=2'`) and open a
+  GitHub issue so the field mapping can be fixed.
 
 ## Phase 3 — Discord bot
 
@@ -121,10 +113,15 @@ python -m src.main
 
 ## Phase 4 — Dashboard + phone app
 
-In `.env`:
+Generate a token first:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(24))"
+```
+
+Then in `.env`:
 ```
 ENABLE_DASHBOARD=true
-DASHBOARD_AUTH_TOKEN=<generate one: python -c "import secrets;print(secrets.token_urlsafe(24))">
+DASHBOARD_AUTH_TOKEN=<paste the generated token>
 ```
 
 Restart the bot (or run `python -m src.main --dashboard-only` for UI-only).
@@ -155,6 +152,8 @@ to the penny. Note: real-time quotes are licensed for your personal use —
 don't expose the dashboard publicly with a Tradier key attached.
 
 ## Phase 6 — Scanners (flow + prediction markets)
+
+Add to `.env`, then restart the bot:
 
 ```
 ENABLE_FLOW_ALERTS=true
@@ -196,8 +195,11 @@ ENABLE_SELL_MIRROR=false         # buys only until trusted
 Local dry run done? Move it somewhere that stays up:
 
 - **VPS + systemd** (recommended, ~$4–6/mo: Hetzner CX11, DO basic):
-  clone, repeat Phases 0–7, then `deploy/politician-trade-agent.service`
-  (edit paths/user) → `systemctl enable --now politician-trade-agent`
+  clone, then re-run the quick verification gates on the new machine —
+  Phase 0's install + `pytest`, the Phase 1–2 smoke tests, and one poll
+  cycle with your `.env` (no need to repeat the multi-week Phase 6–7
+  soak). Then `deploy/politician-trade-agent.service` (edit paths/user)
+  → `systemctl enable --now politician-trade-agent`
 - **Docker:** `docker build -t pta . && docker run -d --env-file .env
   -p 8080:8080 -v pta-data:/data --restart unless-stopped pta`
 - Set `CACHE_DIR` and `DATABASE_PATH` on a persistent volume; back up
@@ -253,7 +255,7 @@ are where paid feeds would plug in.
 | Alpaca (paper and live trading) | $0 commissions |
 | Discord | $0 |
 | VPS hosting (optional until Phase 8) | ~$4–12/mo |
-| **Total** | **≈ $5/mo** |
+| **Total** | **$0 until Phase 8, then ≈ $5/mo** |
 
 ## Troubleshooting quick reference
 
@@ -261,10 +263,10 @@ are where paid feeds would plug in.
 |---|---|---|
 | Startup exits with config error | `ALERT_CHANNEL_ID` not numeric | Copy the real channel ID (Developer Mode) |
 | Senate source fetches 0 | Agreement handshake rejected | Retry; capture warning traceback if persistent |
-| House trades all `(no ticker)` | PDF parse failures / paper filings | Send a failing PDF URL from the logs |
+| House trades all `(no ticker)` | PDF parse failures / paper filings | Open an issue with a failing PDF URL from the logs |
 | `/flow` says no chain | Yahoo gating | Set `TRADIER_API_KEY` |
 | Flow alerts silent all day | Outside market hours, or premium floor too high | Check clock/timezone; lower `FLOW_MIN_PREMIUM_USD` |
 | Polymarket panel empty | No bets above floor yet, or API shape drift | Lower floor; check logs for parse warnings |
 | Dashboard 401 on phone | Cookie not set yet | Open `/?token=...` once |
-| `last_poll_age_s` growing unbounded | Poller crashed silently | Check logs; restart; report traceback |
-| Duplicate alerts after restart | Should never happen | Report immediately — dedup regression |
+| `last_poll_age_s` growing unbounded | Poller crashed silently | Check logs; restart; file the traceback in an issue |
+| Duplicate alerts after restart | Should never happen | Open an issue immediately — dedup regression |
