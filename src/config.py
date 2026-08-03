@@ -66,6 +66,21 @@ class Settings(BaseSettings):
     prediction_min_bet_usd: float = 10_000.0
     prediction_poll_minutes: int = 5
 
+    # Insider-surge detection: many wallets converging one-sided on the same
+    # (market, outcome) inside a rolling window — the "300 bets before the
+    # strike" pattern. Military/geopolitical markets score highest.
+    enable_surge_alerts: bool = True
+    surge_window_hours: float = 24.0
+    surge_min_wallets: int = 5
+    surge_min_total_usd: float = 100_000.0
+    surge_min_buy_ratio: float = 0.7
+    # Behavioral clustering: wallets that co-bet the same outcome within this
+    # window, min_shared times, are linked as one actor.
+    cluster_window_minutes: int = 120
+    cluster_min_shared: int = 2
+    # Optional on-chain funder graph (Polygonscan). Empty = behavioral only.
+    polygonscan_api_key: str = ""
+
     # --- Alert filters ---
     # Minimum disclosed amount (lower bound of the range) for channel alerts.
     alert_min_amount_usd: float = 0.0

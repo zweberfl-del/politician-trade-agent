@@ -10,6 +10,7 @@ from src.storage.database import (
     _SCHEMA_V3_SQL,
     _SCHEMA_V4_SQL,
     _SCHEMA_V5_SQL,
+    _SCHEMA_V6_SQL,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ _MIGRATIONS: list[str] = [
     _SCHEMA_V3_SQL,  # v3 — flow_alerts (options flow alert dedup)
     _SCHEMA_V4_SQL,  # v4 — flow_events (alert detail for dedup + dashboard)
     _SCHEMA_V5_SQL,  # v5 — prediction_events (Polymarket unusual bets)
+    _SCHEMA_V6_SQL,  # v6 — prediction_trades + prediction_surges (insider surges)
 ]
 
 

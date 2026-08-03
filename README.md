@@ -30,6 +30,14 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 - Alerts show the wallet's age, win/loss record, and lifetime PnL; `/polymarket` lists recent hits, and the dashboard has a live panel (`/api/prediction`)
 - Uses Polymarket's free public data API — no key, no wallet needed
 
+**Insider surges & wallet clustering** *(the 60 Minutes / Bubblemaps pattern)*
+- Beyond single bets, `ENABLE_SURGE_ALERTS=true` (on by default with the prediction scanner) detects **many wallets converging one-sided on the same outcome** inside a rolling window — the "300 bets of $1K+ in the 24h before the strike" pattern. A surge fires on `SURGE_MIN_WALLETS`+ distinct wallets, `SURGE_MIN_TOTAL_USD`+ in buys, and a `SURGE_MIN_BUY_RATIO`+ one-sided book
+- **Category-aware**: markets are bucketed (military / geopolitical / election / economy / crypto) from their title; military and geopolitical surges score highest, because that's where the informed money showed up
+- **Wallet clustering** links accounts that act as one:
+  - **Behavioral** (always on) — wallets that repeatedly co-bet the same outcome within minutes of each other
+  - **On-chain funder graph** (optional, free `POLYGONSCAN_API_KEY`) — wallets seeded by the same Polygon address, the "nine connected accounts" Bubblemaps surfaced
+- Surge alerts show the crowd size, one-sidedness, informed-wallet counts, and the cluster note; `/surges` lists recent hits and the dashboard has a live panel (`/api/surges`)
+
 > **Going live?** Follow [LIVE_SETUP.md](LIVE_SETUP.md) — a phased runbook
 > from fresh clone to live test, with verification gates, tuning guidance,
 > security/licensing considerations, costs, and troubleshooting.
@@ -56,6 +64,8 @@ A Discord market-data terminal: congressional trade tracking with optional broke
 | Web UI / mobile app | ✅ responsive dashboard, installable PWA (Add to Home Screen) | Same database, served by the bot |
 | Trade execution | ✅ Alpaca mirroring | UW has no execution at all |
 | Prediction-market wallet forensics | ✅ `/polymarket` + alerts (UW has nothing comparable) | Polymarket public data API (free) |
+| Insider-surge detection (Bubblemaps-style) | ✅ `/surges` + alerts + `/api/surges` — many wallets converging one-sided, category-weighted | Polymarket public data API (free) |
+| Wallet clustering / connection graph | ✅ behavioral co-betting always on; on-chain funder graph with a free Polygonscan key | Polymarket feed + optional Polygonscan (free) |
 
 Set `TRADIER_API_KEY` (a free brokerage account) and options data is
 real-time everywhere, automatically — the same license-through-a-vendor

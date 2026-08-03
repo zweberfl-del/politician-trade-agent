@@ -51,7 +51,42 @@ class TestMigrations:
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute("PRAGMA user_version")
             version = (await cursor.fetchone())[0]
-        assert version == 5
+        assert version == 6
+
+    async def test_v6_tables_present(self, db_path) -> None:
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            tables = {row[0] for row in await cursor.fetchall()}
+        assert {"prediction_trades", "prediction_surges"} <= tables
+
+    async def test_upgrade_from_v5_adds_surge_tables(self, tmp_path) -> None:
+        # A database stuck at v5 must gain the v6 tables without error.
+        path = str(tmp_path / "v5.db")
+        from src.storage.database import (
+            _SCHEMA_SQL,
+            _SCHEMA_V2_SQL,
+            _SCHEMA_V3_SQL,
+            _SCHEMA_V4_SQL,
+            _SCHEMA_V5_SQL,
+        )
+
+        async with aiosqlite.connect(path) as db:
+            for script in (_SCHEMA_SQL, _SCHEMA_V2_SQL, _SCHEMA_V3_SQL,
+                           _SCHEMA_V4_SQL, _SCHEMA_V5_SQL):
+                await db.executescript(script)
+            await db.execute("PRAGMA user_version = 5")
+            await db.commit()
+
+        await run_migrations(path)
+        async with aiosqlite.connect(path) as db:
+            cursor = await db.execute("PRAGMA user_version")
+            assert (await cursor.fetchone())[0] == 6
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE name='prediction_surges'"
+            )
+            assert await cursor.fetchone() is not None
 
     async def test_rerun_is_idempotent(self, db_path) -> None:
         await run_migrations(db_path)
