@@ -190,9 +190,13 @@ class FakePolymarketClient:
 class FakeBot:
     def __init__(self) -> None:
         self.alerts = []
+        self.surges = []
 
     async def send_prediction_alert(self, bet) -> None:
         self.alerts.append(bet)
+
+    async def send_surge_alert(self, surge) -> None:
+        self.surges.append(surge)
 
 
 @pytest.fixture
@@ -230,3 +234,91 @@ class TestPredictionScanner:
         posted = await pred_scanner.scan_once()
         assert posted == 0
         assert len(bot.alerts) == 1
+
+    async def test_scan_once_logs_raw_trades(self, scanner) -> None:
+        pred_scanner, _bot = scanner
+        await pred_scanner.scan_once()
+
+        from src.storage.database import get_recent_prediction_trades
+
+        rows = await get_recent_prediction_trades(pred_scanner.db_path, 0)
+        assert len(rows) == 1
+        assert rows[0]["market_slug"] == "will-x-happen"
+        assert rows[0]["category"]  # tagged
+
+
+def _surge_trade(wallet: str, tx: str, usd: float = 30_000.0) -> PredictionTrade:
+    now = int(time.time())
+    return PredictionTrade(
+        wallet=wallet,
+        pseudonym=wallet,
+        market_title="Will the US strike Iran this month?",
+        market_slug="us-strike-on-iran",
+        outcome="Yes",
+        side="BUY",
+        shares=usd / 0.5,
+        price=0.5,
+        timestamp=now - 60,
+        tx_hash=tx,
+    )
+
+
+@pytest.fixture
+async def surge_scanner(tmp_path, monkeypatch):
+    from src import config
+
+    db_path = str(tmp_path / "surge.db")
+    await run_migrations(db_path)
+    monkeypatch.setattr(config.settings, "prediction_min_bet_usd", 10_000.0)
+    monkeypatch.setattr(config.settings, "surge_min_wallets", 5)
+    monkeypatch.setattr(config.settings, "surge_min_total_usd", 100_000.0)
+    monkeypatch.setattr(config.settings, "enable_surge_alerts", True)
+
+    trades = [_surge_trade(f"0xw{i}", f"0xtx{i}") for i in range(6)]  # 6 x $30K
+    fresh = WalletProfile(
+        wallet="0xw0", first_seen_ts=int(time.time()) - 3600, activity_count=1
+    )
+    client = FakePolymarketClient(trades, fresh)
+    bot = FakeBot()
+    return PredictionScanner(client=client, bot=bot, db_path=db_path), bot
+
+
+class TestSurgeScanner:
+    async def test_detects_and_alerts_surge(self, surge_scanner) -> None:
+        pred_scanner, bot = surge_scanner
+        await pred_scanner.scan_once()  # log raw fills
+        posted = await pred_scanner.scan_surges()
+        assert posted == 1
+        assert bot.surges[0].wallet_count == 6
+        assert bot.surges[0].category == "military"
+
+        from src.storage.database import get_recent_surges
+
+        surges = await get_recent_surges(pred_scanner.db_path)
+        assert len(surges) == 1
+        assert surges[0]["outcome"] == "Yes"
+
+    async def test_surge_not_realerted(self, surge_scanner) -> None:
+        pred_scanner, bot = surge_scanner
+        await pred_scanner.scan_once()
+        await pred_scanner.scan_surges()
+        posted = await pred_scanner.scan_surges()
+        assert posted == 0
+        assert len(bot.surges) == 1
+
+    async def test_no_surge_below_thresholds(self, tmp_path, monkeypatch) -> None:
+        from src import config
+
+        db_path = str(tmp_path / "nosurge.db")
+        await run_migrations(db_path)
+        monkeypatch.setattr(config.settings, "prediction_min_bet_usd", 10_000.0)
+        monkeypatch.setattr(config.settings, "surge_min_wallets", 5)
+        monkeypatch.setattr(config.settings, "surge_min_total_usd", 100_000.0)
+
+        trades = [_surge_trade(f"0xw{i}", f"0xtx{i}") for i in range(3)]  # only 3 wallets
+        client = FakePolymarketClient(
+            trades, WalletProfile(wallet="0xw0", first_seen_ts=int(time.time()) - 3600)
+        )
+        scanner = PredictionScanner(client=client, bot=FakeBot(), db_path=db_path)
+        await scanner.scan_once()
+        assert await scanner.scan_surges() == 0

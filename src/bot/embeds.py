@@ -539,6 +539,86 @@ def prediction_list_embed(events: list[dict]) -> discord.Embed:
 
 
 # ---------------------------------------------------------------------------
+# Insider-surge embeds
+# ---------------------------------------------------------------------------
+
+_CATEGORY_LABELS = {
+    "military": "🪖 Military",
+    "geopolitical": "🌍 Geopolitical",
+    "election": "🗳️ Election",
+    "economy": "📉 Economy",
+    "crypto": "🪙 Crypto",
+    "other": "Other",
+}
+
+
+def surge_alert_embed(surge) -> discord.Embed:
+    """Alert for one detected insider surge (analysis.surge.Surge)."""
+    color = _COLOR_RED if surge.category in ("military", "geopolitical") else _COLOR_GOLD
+    embed = discord.Embed(
+        title=f"🚨 Insider Surge — {surge.market_title or 'Unknown market'}",
+        color=color,
+    )
+    if surge.market_url:
+        embed.url = surge.market_url
+
+    embed.add_field(
+        name="Converging on",
+        value=f"BUY **{surge.outcome or '?'}** — {int(surge.buy_ratio * 100)}% one-sided",
+        inline=True,
+    )
+    embed.add_field(name="Wallets", value=str(surge.wallet_count), inline=True)
+    embed.add_field(name="Total", value=_fmt_premium(surge.total_usd), inline=True)
+
+    embed.add_field(
+        name="Category",
+        value=_CATEGORY_LABELS.get(surge.category, surge.category or "Other"),
+        inline=True,
+    )
+    informed = []
+    if surge.fresh_count:
+        informed.append(f"🆕 {surge.fresh_count} fresh")
+    if surge.sharp_count:
+        informed.append(f"🎯 {surge.sharp_count} proven")
+    embed.add_field(
+        name="Informed wallets", value=" · ".join(informed) or "—", inline=True
+    )
+
+    if surge.cluster_note:
+        embed.add_field(name="🔗 Cluster", value=surge.cluster_note, inline=False)
+
+    if surge.reasons:
+        embed.add_field(name="Why", value="\n".join(f"• {r}" for r in surge.reasons), inline=False)
+
+    embed.set_footer(text="Polymarket public data · surge detection")
+    return embed
+
+
+def surge_list_embed(surges: list[dict]) -> discord.Embed:
+    """Answer for /surges: recent insider surges from the database."""
+    embed = discord.Embed(title="🚨 Insider Surges", color=_COLOR_GOLD)
+    if not surges:
+        embed.description = (
+            "No surges recorded yet. The scanner flags many wallets converging "
+            "one-sided on the same outcome — strongest on military/geopolitical markets."
+        )
+        return embed
+
+    lines = []
+    for s in surges[:10]:
+        cat = _CATEGORY_LABELS.get(s.get("category", ""), s.get("category") or "")
+        note = s.get("cluster_note") or ""
+        lines.append(
+            f"**{_fmt_premium(s.get('total_usd') or 0)}** · "
+            f"{int(s.get('wallet_count') or 0)} wallets → "
+            f"{s.get('outcome', '?')} — {(s.get('market_title') or '')[:55]}\n"
+            f"    {cat}" + (f" · 🔗 {note}" if note else "")
+        )
+    embed.description = "\n".join(lines)[:4000]
+    return embed
+
+
+# ---------------------------------------------------------------------------
 # Settings embed
 # ---------------------------------------------------------------------------
 

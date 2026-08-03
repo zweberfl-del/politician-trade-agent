@@ -28,6 +28,7 @@ from src.bot.embeds import (
     gex_embed,
     darkpool_embed,
     prediction_list_embed,
+    surge_list_embed,
 )
 
 if TYPE_CHECKING:
@@ -337,6 +338,19 @@ async def setup_commands(
         await interaction.response.defer()
         events = await get_recent_prediction_events(settings.database_path)
         await interaction.followup.send(embed=prediction_list_embed(events))
+
+    # -- /surges ----------------------------------------------------------------
+
+    @tree.command(
+        name="surges",
+        description="Insider surges: many wallets converging one-sided on a market",
+    )
+    async def surges_cmd(interaction: discord.Interaction) -> None:
+        from src.storage.database import get_recent_surges
+
+        await interaction.response.defer()
+        surges = await get_recent_surges(settings.database_path)
+        await interaction.followup.send(embed=surge_list_embed(surges))
 
     # -- /settings --------------------------------------------------------
 

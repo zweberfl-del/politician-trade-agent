@@ -108,6 +108,49 @@ CREATE TABLE IF NOT EXISTS prediction_events (
 );
 """
 
+# Added in schema v6: raw large-bet log + detected insider surges.
+# prediction_trades stores *every* large fill (not just alerted ones) so a
+# 24h surge can be reconstructed; prediction_surges dedups and feeds /surges
+# and the dashboard.
+_SCHEMA_V6_SQL = """
+CREATE TABLE IF NOT EXISTS prediction_trades (
+    event_key          TEXT UNIQUE,
+    wallet             TEXT,
+    market_slug        TEXT,
+    market_title       TEXT,
+    market_url         TEXT,
+    outcome            TEXT,
+    side               TEXT,
+    usd_size           REAL,
+    price              REAL,
+    category           TEXT,
+    ts                 INTEGER,
+    created_at         TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_trades_ts ON prediction_trades(ts);
+
+CREATE TABLE IF NOT EXISTS prediction_surges (
+    surge_key          TEXT UNIQUE,
+    market_title       TEXT,
+    market_url         TEXT,
+    market_slug        TEXT,
+    outcome            TEXT,
+    category           TEXT,
+    window_start       INTEGER,
+    window_end         INTEGER,
+    wallet_count       INTEGER,
+    total_usd          REAL,
+    buy_ratio          REAL,
+    fresh_count        INTEGER,
+    sharp_count        INTEGER,
+    cluster_note       TEXT,
+    score              REAL,
+    reasons            TEXT,
+    created_at         TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 # Added in schema v3 (see src/storage/migrations.py)
 _SCHEMA_V3_SQL = """
 CREATE TABLE IF NOT EXISTS flow_alerts (
@@ -155,6 +198,7 @@ async def init_db(db_path: str) -> str:
         await db.executescript(_SCHEMA_V3_SQL)
         await db.executescript(_SCHEMA_V4_SQL)
         await db.executescript(_SCHEMA_V5_SQL)
+        await db.executescript(_SCHEMA_V6_SQL)
         await db.commit()
     logger.info("Database initialised at %s", db_path)
     return db_path
@@ -620,6 +664,90 @@ async def get_recent_prediction_events(db_path: str, limit: int = 25) -> list[di
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM prediction_events ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Prediction-market raw fills + insider surges (schema v6)
+# ---------------------------------------------------------------------------
+
+
+async def record_prediction_trade(db_path: str, trade: dict) -> None:
+    """Log one large fill for surge reconstruction (idempotent on event_key).
+
+    *trade* keys: event_key, wallet, market_slug, market_title, market_url,
+    outcome, side, usd_size, price, category, ts.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO prediction_trades (
+                event_key, wallet, market_slug, market_title, market_url,
+                outcome, side, usd_size, price, category, ts
+            ) VALUES (
+                :event_key, :wallet, :market_slug, :market_title, :market_url,
+                :outcome, :side, :usd_size, :price, :category, :ts
+            )
+            """,
+            trade,
+        )
+        await db.commit()
+
+
+async def get_recent_prediction_trades(db_path: str, since_ts: int) -> list[dict]:
+    """All logged fills with ``ts >= since_ts`` (the surge window)."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM prediction_trades WHERE ts >= ? ORDER BY ts ASC",
+            (since_ts,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def was_surge_alerted(db_path: str, surge_key: str) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM prediction_surges WHERE surge_key = ? LIMIT 1",
+            (surge_key,),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def record_surge(db_path: str, surge: dict) -> None:
+    """Store one detected surge (idempotent on surge_key).
+
+    *surge* keys: surge_key, market_title, market_url, market_slug, outcome,
+    category, window_start, window_end, wallet_count, total_usd, buy_ratio,
+    fresh_count, sharp_count, cluster_note, score, reasons (JSON string).
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO prediction_surges (
+                surge_key, market_title, market_url, market_slug, outcome,
+                category, window_start, window_end, wallet_count, total_usd,
+                buy_ratio, fresh_count, sharp_count, cluster_note, score, reasons
+            ) VALUES (
+                :surge_key, :market_title, :market_url, :market_slug, :outcome,
+                :category, :window_start, :window_end, :wallet_count, :total_usd,
+                :buy_ratio, :fresh_count, :sharp_count, :cluster_note, :score, :reasons
+            )
+            """,
+            surge,
+        )
+        await db.commit()
+
+
+async def get_recent_surges(db_path: str, limit: int = 25) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM prediction_surges ORDER BY created_at DESC, score DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()

@@ -43,6 +43,32 @@ class UnusualBet:
         return ", ".join(self.signals)
 
 
+def is_fresh_wallet(
+    profile: WalletProfile,
+    *,
+    fresh_max_age_hours: float = FRESH_WALLET_MAX_AGE_HOURS,
+    now: float | None = None,
+) -> bool:
+    """A brand-new account, or an old one that's barely ever been used."""
+    age = profile.age_hours(now)
+    brand_new = age is not None and age <= fresh_max_age_hours
+    barely_used = profile.activity_count <= FRESH_WALLET_MAX_ACTIVITY
+    return brand_new or (barely_used and profile.first_seen_ts is not None)
+
+
+def is_sharp_wallet(profile: WalletProfile) -> bool:
+    """An account with an outlier win record or lifetime PnL."""
+    consistent_winner = (
+        profile.resolved_positions >= SHARP_MIN_RESOLVED
+        and profile.win_rate >= SHARP_MIN_WIN_RATE
+    )
+    big_pnl_winner = (
+        profile.total_pnl_usd >= SHARP_MIN_PNL_USD
+        and profile.win_rate >= SHARP_PNL_MIN_WIN_RATE
+    )
+    return consistent_winner or big_pnl_winner
+
+
 def wallet_signals(
     trade: PredictionTrade,
     profile: WalletProfile,
@@ -54,21 +80,10 @@ def wallet_signals(
     """Return the list of suspicion signals for one bet (may be empty)."""
     signals: list[str] = []
 
-    age = profile.age_hours(now)
-    brand_new = age is not None and age <= fresh_max_age_hours
-    barely_used = profile.activity_count <= FRESH_WALLET_MAX_ACTIVITY
-    if brand_new or (barely_used and profile.first_seen_ts is not None):
+    if is_fresh_wallet(profile, fresh_max_age_hours=fresh_max_age_hours, now=now):
         signals.append("fresh-wallet")
 
-    consistent_winner = (
-        profile.resolved_positions >= SHARP_MIN_RESOLVED
-        and profile.win_rate >= SHARP_MIN_WIN_RATE
-    )
-    big_pnl_winner = (
-        profile.total_pnl_usd >= SHARP_MIN_PNL_USD
-        and profile.win_rate >= SHARP_PNL_MIN_WIN_RATE
-    )
-    if consistent_winner or big_pnl_winner:
+    if is_sharp_wallet(profile):
         signals.append("sharp-wallet")
 
     if trade.side == "BUY" and 0 < trade.price <= LONGSHOT_MAX_PRICE:
