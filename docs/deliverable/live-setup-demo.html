@@ -1,0 +1,278 @@
+<!-- Politician Trade Agent — setup & demo deliverable -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Politician Trade Agent</title>
+<link rel="stylesheet" href="deliverable.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== HERO ===== -->
+  <div class="hero">
+    <div class="kicker">📈 market intelligence · setup &amp; demo</div>
+    <h1>Politician Trade Agent</h1>
+    <p>An <strong>Unusual&nbsp;Whales-class</strong> market terminal — congressional trade tracking,
+       real-time options flow, and prediction-market wallet forensics — rebuilt entirely on
+       <strong>free public data</strong> and piped to Discord, a web dashboard, and your phone.</p>
+    <div class="meta">
+      <span class="chip">🏛️ Congress filings</span>
+      <span class="chip">⚡ Real-time options</span>
+      <span class="chip">🔮 Polymarket forensics</span>
+      <span class="chip">💸 ≈ $5 / month</span>
+    </div>
+  </div>
+
+  <div class="callout c-info"><span class="ic">🎯</span><b>What this is.</b>
+    A one-page tour of the idea plus the exact steps to take it live. The pitch is up top;
+    the phased runbook (§4) is what you follow tomorrow to go from a fresh clone to a running
+    live test — every step has a pass/fail gate, and nothing here costs more than a coffee.</div>
+
+  <!-- ===== 1. THE IDEA ===== -->
+  <h2 class="section"><span class="dot"></span>💡 The idea in one breath</h2>
+  <div class="card">
+    <p>Commercial tools like Unusual Whales charge a monthly subscription to watch
+       <strong>where the informed money moves</strong> — Congress, the options tape, dark pools.
+       Almost all of that signal is sitting in <strong>free, public feeds</strong>: House &amp; Senate
+       disclosure filings, a free brokerage API for real-time options quotes, FINRA aggregates,
+       and Polymarket's open trade feed. This project stitches them together and pushes the
+       alerts to you — for the price of a tiny VPS.</p>
+    <div class="flow">
+      <span class="pill">public data sources</span><span class="arr">→</span>
+      <span class="pill">parse &amp; enrich</span><span class="arr">→</span>
+      <span class="pill">detect the unusual</span><span class="arr">→</span>
+      <span class="pill">Discord · dashboard · phone</span>
+    </div>
+  </div>
+
+  <!-- ===== 2. WHAT IT DOES ===== -->
+  <h2 class="section"><span class="dot"></span>🧰 What it does</h2>
+
+  <div class="card">
+    <p>🏛️ <strong>Congressional trading.</strong> Polls official House Clerk &amp; Senate EFD
+       filings and parses <strong>per-trade detail</strong> — ticker, buy/sell, dates, amount range,
+       owner. Posts alerts with party/state tags and disclosure-lag, plus profiles
+       (<code class="inline">/politician</code>), most-traded tickers (<code class="inline">/top</code>),
+       and a return-vs-SPY leaderboard (<code class="inline">/leaderboard</code>). Optional: mirror
+       the trades through Alpaca (paper or live).</p>
+  </div>
+
+  <div class="card">
+    <p>⚡ <strong>Options flow &amp; market data.</strong> <code class="inline">/flow</code> for unusual
+       contracts &amp; put/call sentiment, <code class="inline">/gex</code> for Black-Scholes gamma
+       exposure, <code class="inline">/darkpool</code> for FINRA short-volume &amp; ATS data, plus
+       background unusual-activity alerts. Drop in a <strong>free Tradier key</strong> and every
+       consumer upgrades to <strong>real-time OPRA quotes</strong> automatically — no key means a
+       delayed Yahoo fallback.</p>
+  </div>
+
+  <div class="card">
+    <p>🔮 <strong>Prediction-market forensics (Polymarket).</strong> Watches the public trade feed
+       and profiles the wallet behind every large bet — <strong>fresh wallets</strong> suddenly placing
+       size, <strong>sharp wallets</strong> with outlier win records, <strong>longshot conviction</strong>,
+       and <strong>whale-size</strong> fills. Something Unusual Whales has no equivalent for.</p>
+  </div>
+
+  <div class="card">
+    <p>🕸️ <strong>Insider-surge detection &amp; wallet clustering.</strong> The 60&nbsp;Minutes /
+       Bubblemaps pattern: <strong>many wallets converging one-sided</strong> on the same outcome before
+       a strike. Category-weighted (military &amp; geopolitical score highest), with behavioral
+       co-bet clustering always on and an optional on-chain funder-graph via a free Polygonscan key.
+       <code class="inline">/surges</code> lists the hits.</p>
+  </div>
+
+  <div class="card">
+    <p>📱 <strong>Web dashboard &amp; phone app.</strong> A responsive dashboard with live feeds and
+       per-ticker tools, backed by JSON APIs — installable as a <strong>PWA</strong> (Add to Home Screen)
+       for a standalone phone app. Token auth gates it; <code class="inline">/api/health</code> feeds any
+       uptime monitor.</p>
+  </div>
+
+  <div class="callout c-tip"><span class="ic">🆚</span><b>vs. Unusual Whales.</b>
+    Congressional tracker, options flow, Greeks/GEX, dark pool, and Discord alerts — all matched on
+    free data. Then it goes <b>further</b>: trade execution (Alpaca), prediction-market wallet
+    forensics, and Bubblemaps-style surge detection, none of which UW offers.</div>
+
+  <!-- ===== 3. UNDER THE HOOD ===== -->
+  <h2 class="section"><span class="dot"></span>🔌 Data sources &amp; plumbing</h2>
+  <div class="card" style="padding:6px 8px;">
+    <table>
+      <tr><th>Signal</th><th>Source</th><th>Cost</th></tr>
+      <tr><td>Congressional trades</td><td>House Clerk XML + Senate EFD (parsed PTRs)</td><td>Free</td></tr>
+      <tr><td>Options chains / Greeks</td><td>Tradier real-time (free key) · Yahoo delayed fallback</td><td>Free</td></tr>
+      <tr><td>Dark pool / short volume</td><td>FINRA daily &amp; weekly aggregates</td><td>Free</td></tr>
+      <tr><td>Prediction markets</td><td>Polymarket public data API</td><td>Free</td></tr>
+      <tr><td>Wallet funder graph</td><td>Polygonscan (optional free key)</td><td>Free</td></tr>
+      <tr><td>Politician enrichment</td><td>unitedstates/congress-legislators dataset</td><td>Free</td></tr>
+      <tr><td>Trade execution</td><td>Alpaca paper / live</td><td>$0 commissions</td></tr>
+    </table>
+    <p class="muted">SQLite storage with full dedup (no duplicate alerts or orders); the first run
+       backfills history silently instead of flooding the channel. HTTP retries with backoff and an
+       ETag-aware cache keep it polite to government servers.</p>
+  </div>
+
+  <!-- ===== 4. LIVE SETUP RUNBOOK ===== -->
+  <h2 class="section"><span class="n">4</span> Live setup — the path for tomorrow</h2>
+  <div class="callout c-info"><span class="ic">🧭</span><b>The golden rule.</b>
+    Every integration was built and unit-tested, but the government/market APIs couldn't be reached
+    from the build sandbox. So the phases below are ordered to <b>prove each data source before
+    anything depends on it</b>. Every source degrades to a warning, never a crash — when a step
+    fails, capture the log and move on.</div>
+
+  <div class="card step">
+    <div class="badge">0</div>
+    <div class="step-body">
+      <h3>Clone &amp; install <span class="sub">— Python 3.11+, no paid services</span></h3>
+      <div class="term">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>bash — bootstrap</span></div>
+<pre><span class="k">git</span> clone <span class="v">&lt;your-repo-url&gt;</span> &amp;&amp; <span class="k">cd</span> politician-trade-agent
+<span class="k">git</span> checkout <span class="v">main</span>
+<span class="k">python</span> -m venv .venv &amp;&amp; <span class="k">source</span> .venv/bin/activate
+<span class="k">pip</span> install -e <span class="v">".[dev,trading]"</span>
+<span class="k">pytest</span> -q            <span class="c"># expect: all tests pass before you start</span>
+<span class="k">cp</span> .env.example .env</pre></div>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">1</div>
+    <div class="step-body">
+      <h3>Congressional smoke test <span class="sub">— no credentials needed</span></h3>
+      <p>The single most important check: exercises the House ZIP + PDF parsing, the Senate EFD
+         handshake + HTML parsing, and enrichment — no Discord, no broker.</p>
+      <div class="term">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>bash</span></div>
+<pre><span class="k">python</span> -m src.main --once</pre></div>
+      <p><span class="pass">PASS</span> &nbsp;<code class="inline">--once complete: fetched=N new=N</code> with N&nbsp;&gt;&nbsp;0,
+         and some <code class="inline">NEW</code> lines show <strong>real tickers &amp; amount ranges</strong>
+         (proves detail parsing). Run it twice — the second run should show <code class="inline">new=0</code> (dedup proof).</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">2</div>
+    <div class="step-body">
+      <h3>Market-data smoke test <span class="sub">— still no credentials</span></h3>
+      <p>A short Python snippet (in the runbook) hits Yahoo options, FINRA short volume, and the
+         Polymarket feed. <span class="pass">PASS</span> = all three print <code class="inline">OK</code>.
+         A Yahoo miss only affects the keyless fallback — Tradier (§Phase&nbsp;5) makes it moot.</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">3</div>
+    <div class="step-body">
+      <h3>Discord bot <span class="sub">— token + channel ID</span></h3>
+      <p>Create the app in the Developer Portal, invite with scopes <code class="inline">bot</code> +
+         <code class="inline">applications.commands</code> (Send Messages, Embed Links, Use Slash Commands),
+         and copy your alerts channel ID into <code class="inline">.env</code>.</p>
+      <p><span class="pass">PASS</span> &nbsp;Typing <code class="inline">/</code> lists every command —
+         <code class="inline">trades · top · politician · leaderboard · follow · flow · gex · darkpool · polymarket · surges · portfolio · settings</code>.
+         The first cycle logs a <strong>silent backfill</strong> and posts nothing, by design.</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">4</div>
+    <div class="step-body">
+      <h3>Dashboard + phone app <span class="sub">— optional, 2 minutes</span></h3>
+      <div class="term">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>.env</span></div>
+<pre><span class="v">ENABLE_DASHBOARD</span>=true
+<span class="v">DASHBOARD_AUTH_TOKEN</span>=<span class="k">$(python -c "import secrets;print(secrets.token_urlsafe(24))")</span></pre></div>
+      <p>From your phone on the same Wi-Fi: <code class="inline">http://&lt;lan-ip&gt;:8080/?token=…</code>,
+         then browser menu → <strong>Add to Home Screen</strong>. <span class="pass">PASS</span> = 401 without
+         the token, loads with it, panels populate, and <code class="inline">/api/health</code> shows a
+         fresh <code class="inline">last_poll_age_s</code>.</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">5</div>
+    <div class="step-body">
+      <h3>Real-time options data <span class="sub">— optional, recommended, $0</span></h3>
+      <p>Open a free Tradier brokerage account (no funding needed for API access), create a
+         <strong>production</strong> token, set <code class="inline">TRADIER_API_KEY</code>. That's it —
+         <code class="inline">OPTIONS_PROVIDER=auto</code> upgrades flow, <code class="inline">/flow</code>,
+         <code class="inline">/gex</code>, and the dashboard to real-time. Verify <code class="inline">/gex SPY</code>
+         during market hours; spot should match a live quote to the penny.</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">6</div>
+    <div class="step-body">
+      <h3>Scanners <span class="sub">— flow, prediction markets &amp; surges</span></h3>
+      <div class="term">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>.env</span></div>
+<pre><span class="v">ENABLE_FLOW_ALERTS</span>=true
+<span class="v">FLOW_MIN_PREMIUM_USD</span>=250000
+<span class="v">ENABLE_PREDICTION_ALERTS</span>=true
+<span class="v">PREDICTION_MIN_BET_USD</span>=10000
+<span class="v">ENABLE_SURGE_ALERTS</span>=true   <span class="c"># surges run inside the prediction scanner</span></pre></div>
+      <p>Give it a full trading day. <strong>Too noisy?</strong> raise the premium / bet floors and
+         <code class="inline">SURGE_MIN_WALLETS</code>. <strong>Too quiet?</strong> lower them. Expect one
+         tuning pass after day one and another after a week.</p>
+    </div>
+  </div>
+
+  <div class="card step">
+    <div class="badge">7</div>
+    <div class="step-body">
+      <h3>Paper trading &rarr; always-on &rarr; live <span class="sub">— take your time</span></h3>
+      <p>Turn on Alpaca <strong>paper</strong> trading (buys only) and run it for at least two clean
+         weeks — orders appear in Alpaca, restarts never duplicate, <code class="inline">/portfolio</code>
+         matches. Then move it to an always-on host (VPS + systemd, or Docker), and only after weeks of
+         clean paper flip to <strong>live</strong> keys — small size, buys only, checked daily.</p>
+    </div>
+  </div>
+
+  <!-- ===== 5. WATCH OUT ===== -->
+  <h2 class="section"><span class="dot"></span>🚦 Before you rely on it</h2>
+  <div class="callout c-warn"><span class="ic">⏳</span><b>Strategy reality.</b>
+    The STOCK Act allows members up to <b>45 days</b> to disclose, so you always enter late and
+    amounts are ranges, not exact sizes. Treat mirroring as one signal input, not arbitrage.</div>
+  <div class="callout c-stop"><span class="ic">🛑</span><b>Data licensing gate.</b>
+    Tradier real-time quotes are licensed for <b>your personal use</b>. Don't expose a public
+    dashboard with a Tradier key attached — keep it token-protected and private, or run keyless
+    (delayed) if you must share it.</div>
+  <div class="callout c-info"><span class="ic">🩺</span><b>Source fragility.</b>
+    house.gov / senate.gov change markup without notice; Yahoo &amp; Polymarket endpoints are
+    unofficial. Watch <code class="inline">/api/health</code> and the logs weekly; budget the occasional
+    parser fix.</div>
+
+  <!-- ===== 6. COST ===== -->
+  <h2 class="section"><span class="dot"></span>💸 What it costs</h2>
+  <div class="card" style="padding:6px 8px;">
+    <table class="kv">
+      <tr><td>All data sources (Congress, FINRA, Polymarket, enrichment)</td><td>$0</td></tr>
+      <tr><td>Tradier — real-time options data</td><td>$0</td></tr>
+      <tr><td>Alpaca — paper &amp; live trading</td><td>$0 commissions</td></tr>
+      <tr><td>Discord</td><td>$0</td></tr>
+      <tr><td>VPS hosting (only once you go always-on)</td><td>~$4–12 / mo</td></tr>
+      <tr><td><strong>Total to run it live</strong></td><td><strong>≈ $5 / month</strong></td></tr>
+    </table>
+  </div>
+
+  <!-- ===== TL;DR ===== -->
+  <div class="tldr">
+    <h3>⚡ TL;DR</h3>
+    <div style="font-size:10.8px; opacity:.96;">A subscription-grade market terminal — Congress,
+      options flow, dark pool, prediction-market forensics, alerts, a phone app, and optional
+      auto-trading — built on free public data for the price of a small VPS. Clone, run
+      <code class="inline">--once</code> to prove the data, wire up Discord, then layer in the dashboard,
+      real-time quotes, and scanners. Paper-trade for weeks before real money.</div>
+    <div class="term">
+      <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>quickstart</span></div>
+<pre><span class="k">python</span> -m src.main --once   <span class="c"># prove the pipeline, no credentials</span>
+<span class="k">python</span> -m src.main          <span class="c"># then go live with Discord</span></pre></div>
+  </div>
+
+  <div class="foot">
+    <span>Politician Trade Agent · setup &amp; demo one-pager</span>
+    <span>Full runbook: LIVE_SETUP.md · Prepared 2026-08-12</span>
+  </div>
+
+</div>
+</body>
+</html>

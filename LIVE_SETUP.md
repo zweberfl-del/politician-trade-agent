@@ -26,7 +26,7 @@ warning rather than a crash, so failures are visible but not fatal.
 ```bash
 git clone <your-repo-url>
 cd politician-trade-agent
-git checkout claude/agent-usability-eval-f9h3tc   # or main once merged
+git checkout main                # everything below is merged to main
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev,trading]"
@@ -111,7 +111,7 @@ python -m src.main
 **Pass criteria:**
 - Bot shows online; typing `/` lists all commands: `trades`, `top`,
   `politician`, `leaderboard`, `follow`, `unfollow`, `following`, `flow`,
-  `gex`, `darkpool`, `polymarket`, `portfolio`, `settings`
+  `gex`, `darkpool`, `polymarket`, `surges`, `portfolio`, `settings`
 - First cycle logs `silent backfill` and posts **nothing** (by design —
   history is ingested quietly)
 - `/trades` returns rows; `/politician` autocompletes a name from them;
@@ -163,15 +163,29 @@ FLOW_MIN_PREMIUM_USD=250000
 
 ENABLE_PREDICTION_ALERTS=true
 PREDICTION_MIN_BET_USD=10000
+
+# Insider-surge detection runs inside the prediction scanner (on by default).
+# Leave these at defaults for the first run; tune after a day of real data.
+ENABLE_SURGE_ALERTS=true
+SURGE_MIN_WALLETS=5
+SURGE_MIN_TOTAL_USD=100000
+SURGE_MIN_BUY_RATIO=0.7
+# Optional: a free Polygonscan key adds on-chain funder-graph clustering
+# (the "nine connected accounts" pattern). Behavioral clustering runs without it.
+POLYGONSCAN_API_KEY=
 ```
 
 **Pass criteria & tuning (give this a full trading day):**
 - Flow alerts appear during market hours only; each contract alerts at most
   once per day
 - Polymarket alerts show wallet age / record / PnL and at least one signal
+- Surge alerts (many wallets converging one-sided) show crowd size,
+  one-sidedness, informed-wallet counts, and any cluster note; `/surges`
+  lists recent hits and the dashboard panel (`/api/surges`) mirrors them
 - **Too noisy?** Raise `FLOW_MIN_PREMIUM_USD` (500K–1M for index-heavy
-  watchlists) and `PREDICTION_MIN_BET_USD` (25K+). **Too quiet?** Lower
-  them. Expect one tuning pass after the first day and another after a week.
+  watchlists), `PREDICTION_MIN_BET_USD` (25K+), and `SURGE_MIN_WALLETS` /
+  `SURGE_MIN_TOTAL_USD`. **Too quiet?** Lower them. Expect one tuning pass
+  after the first day and another after a week.
 
 ## Phase 7 — Paper trading
 

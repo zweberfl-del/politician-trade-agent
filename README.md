@@ -129,6 +129,7 @@ python -m src.main --once
 | `/gex <ticker>` | Gamma exposure profile (net/call/put, strikes, zero-gamma) |
 | `/darkpool <ticker>` | FINRA short volume + weekly dark pool (ATS) data |
 | `/polymarket` | Recent unusual prediction-market bets |
+| `/surges` | Recent insider-style surges: many wallets converging one-sided on a market |
 | `/follow <politician>` | Get DM alerts when a politician discloses a new trade |
 | `/unfollow <politician>` | Stop receiving DM alerts for a politician |
 | `/following` | List the politicians you are currently following |
@@ -163,6 +164,14 @@ All configuration is done through environment variables (or a `.env` file).
 | `ENABLE_PREDICTION_ALERTS` | No | `false` | Polymarket unusual-bet scanner (24/7) |
 | `PREDICTION_MIN_BET_USD` | No | `10000` | Bet-size floor for prediction alerts |
 | `PREDICTION_POLL_MINUTES` | No | `5` | Prediction scan interval |
+| `ENABLE_SURGE_ALERTS` | No | `true` | Detect many wallets converging one-sided (runs inside the prediction scanner) |
+| `SURGE_WINDOW_HOURS` | No | `24` | Rolling window for surge detection |
+| `SURGE_MIN_WALLETS` | No | `5` | Distinct wallets required to fire a surge |
+| `SURGE_MIN_TOTAL_USD` | No | `100000` | Total one-sided buys required to fire a surge |
+| `SURGE_MIN_BUY_RATIO` | No | `0.7` | One-sidedness threshold (buys ÷ total) |
+| `CLUSTER_WINDOW_MINUTES` | No | `120` | Behavioral clustering: co-bet window linking wallets |
+| `CLUSTER_MIN_SHARED` | No | `2` | Min shared co-bets to link two wallets as one actor |
+| `POLYGONSCAN_API_KEY` | No | -- | Free key → on-chain funder-graph wallet clustering |
 | `ENABLE_DASHBOARD` | No | `false` | Serve the web dashboard / phone PWA |
 | `DASHBOARD_HOST` | No | `0.0.0.0` | Dashboard bind address |
 | `DASHBOARD_PORT` | No | `8080` | Dashboard port |

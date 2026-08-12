@@ -1,0 +1,143 @@
+/* =========================================================================
+   PDF DELIVERABLE — design system
+   A print-first stylesheet for polished, "fun but readable" PDF deliverables
+   rendered with headless Chromium (--print-to-pdf).
+
+   THEME: change the --* vars in :root to rebrand. The default is a friendly
+   violet→teal palette. Keep contrast high (dark ink on light cards) so it
+   reads on paper as well as screen.
+
+   PRINT NOTES (load-bearing):
+   - print-color-adjust:exact makes Chromium print background colours/gradients.
+   - @page sets the paper + margins (swap A4 for `letter` if needed).
+   - break-inside:avoid on cards/terminals/callouts stops ugly mid-block splits.
+   ========================================================================= */
+
+:root{
+  --ink:#1f2233;      /* primary text            */
+  --muted:#5b6178;    /* secondary text          */
+  --line:#e7e9f2;     /* hairline borders        */
+  --violet:#6d5cf6;   /* primary accent          */
+  --violet2:#9b8cff;  /* primary accent (light)  */
+  --teal:#12b3a6;     /* secondary accent        */
+  --amber:#f5a524;    /* warning                 */
+  --coral:#ff5d73;    /* danger                  */
+  --green:#1fb673;    /* success                 */
+  --bg:#f6f7fb;       /* page background         */
+  --card:#ffffff;     /* card surface            */
+  --code-bg:#1c2030;  /* terminal background     */
+  --code-ink:#e7ebff; /* terminal text           */
+}
+
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{
+  margin:0; color:var(--ink); background:var(--bg);
+  font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  font-size:11px; line-height:1.55;
+}
+code,pre,.mono{font-family:"Cascadia Code","Consolas","SF Mono","Roboto Mono",monospace;}
+
+@page{ size:A4; margin:14mm 12mm; }
+.wrap{max-width:190mm; margin:0 auto; padding:6mm;}
+
+/* ---------- hero ---------- */
+.hero{
+  background:linear-gradient(135deg,var(--violet) 0%,#8b5cf6 45%,var(--teal) 120%);
+  color:#fff; border-radius:20px; padding:26px 28px; position:relative; overflow:hidden;
+  box-shadow:0 10px 30px rgba(109,92,246,.25);
+}
+.hero::after{content:""; position:absolute; right:-40px; top:-40px; width:200px; height:200px;
+  background:rgba(255,255,255,.12); border-radius:50%;}
+.hero::before{content:""; position:absolute; right:60px; bottom:-70px; width:150px; height:150px;
+  background:rgba(255,255,255,.10); border-radius:50%;}
+.hero .kicker{font-size:11px; letter-spacing:.14em; text-transform:uppercase; opacity:.9; font-weight:700;}
+.hero h1{margin:8px 0 6px; font-size:28px; line-height:1.06; font-weight:800;}
+.hero p{margin:0; max-width:560px; font-size:12.5px; opacity:.96;}
+.meta{display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; position:relative; z-index:2;}
+.chip{background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35);
+  padding:6px 12px; border-radius:999px; font-size:10.5px; font-weight:600;}
+
+/* ---------- section headers ---------- */
+h2.section{font-size:15px; margin:24px 0 10px; display:flex; align-items:center; gap:10px;}
+h2.section .dot{width:10px; height:10px; border-radius:3px; background:var(--violet);}
+h2.section .n{width:22px; height:22px; border-radius:7px; background:var(--violet); color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;}
+
+/* ---------- cards & steps ---------- */
+.card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+  padding:14px 16px; margin:10px 0; box-shadow:0 2px 10px rgba(31,34,51,.04); break-inside:avoid;}
+.step{display:flex; gap:14px; align-items:flex-start;}
+.badge{flex:0 0 auto; width:34px; height:34px; border-radius:50%;
+  background:linear-gradient(135deg,var(--violet),var(--violet2)); color:#fff;
+  font-weight:800; font-size:15px; display:flex; align-items:center; justify-content:center;
+  box-shadow:0 4px 10px rgba(109,92,246,.35);}
+.step-body{flex:1; min-width:0;}
+.step h3{margin:2px 0 6px; font-size:14.5px;}
+.step h3 .sub{color:var(--muted); font-weight:500; font-size:11px;}
+
+p{margin:6px 0;} .muted{color:var(--muted);} strong{color:#111428;}
+
+/* ---------- terminal / code block ---------- */
+.term{background:var(--code-bg); border-radius:12px; overflow:hidden; margin:10px 0;
+  box-shadow:0 6px 16px rgba(28,32,48,.18); break-inside:avoid;}
+.term .bar{display:flex; align-items:center; gap:6px; padding:8px 12px; background:#141826;
+  border-bottom:1px solid rgba(255,255,255,.06);}
+.term .bar i{width:11px; height:11px; border-radius:50%; display:inline-block;}
+.term .bar .r{background:#ff5f57;} .term .bar .y{background:#febc2e;} .term .bar .g{background:#28c840;}
+.term .bar span{margin-left:8px; color:#8b93b3; font-size:10px; letter-spacing:.05em;}
+.term pre{margin:0; padding:12px 14px; color:var(--code-ink); font-size:10.4px; line-height:1.7;
+  white-space:pre-wrap; word-break:break-word;}
+.term pre .c{color:#7a819b;}  /* comment            */
+.term pre .k{color:#8be9fd;}  /* command / keyword  */
+.term pre .v{color:#ffb86c;}  /* value / var / key  */
+.term pre .s{color:#a6f3c0;}  /* string / success   */
+.term pre .f{background:rgba(245,197,66,.20); color:#ffd97a; border-radius:4px; padding:0 4px;} /* fillable */
+
+code.inline{background:#eef0fb; color:#4a3fd6; padding:1px 6px; border-radius:6px; font-size:10px; border:1px solid #e2e4f6;}
+
+/* ---------- callouts ---------- */
+.callout{border-radius:12px; padding:12px 14px 12px 44px; position:relative; margin:12px 0;
+  break-inside:avoid; font-size:10.8px;}
+.callout .ic{position:absolute; left:14px; top:11px; font-size:16px;}
+/* Only the FIRST bold is the heading (block). Later <b> stay inline for emphasis. */
+.callout b:first-of-type{display:block; margin-bottom:2px;}
+.c-tip{background:#eafaf3; border:1px solid #bdecd6; color:#0e6b47;}
+.c-warn{background:#fff7e8; border:1px solid #ffe2ad; color:#8a5a00;}
+.c-stop{background:#fff0f2; border:1px solid #ffd4da; color:#8f1d2c;}
+.c-info{background:#eef4ff; border:1px solid #cfe0ff; color:#1b4a91;}
+
+/* ---------- fillable placeholder (for template PDFs) ---------- */
+.fill{background:#fff3bf; color:#7a5a00; border:1px dashed #e6c04a; border-radius:5px;
+  padding:0 5px; font-weight:600; font-size:.95em; white-space:nowrap;}
+
+/* ---------- checklist ---------- */
+ul.check{list-style:none; margin:6px 0 0; padding:0;}
+ul.check li{padding:4px 0 4px 26px; position:relative;}
+ul.check li::before{content:"◻"; position:absolute; left:4px; top:3px; color:var(--violet); font-size:13px;}
+
+/* ---------- flow pills ---------- */
+.flow{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:10px 0;}
+.flow .pill{background:#f0f0fb; border:1px solid #e0e0f5; color:#4b3fd0;
+  padding:5px 11px; border-radius:999px; font-weight:700; font-size:10.5px;}
+.flow .arr{color:var(--violet2); font-weight:800;}
+
+/* ---------- tables ---------- */
+table{width:100%; border-collapse:separate; border-spacing:0; margin:10px 0; font-size:10.3px;
+  border:1px solid var(--line); border-radius:12px; overflow:hidden;}
+th{background:#f0f1f9; text-align:left; padding:8px 11px; font-weight:700; color:#3a3f57;}
+td{padding:8px 11px; border-top:1px solid var(--line); vertical-align:top;}
+tr:nth-child(even) td{background:#fafbff;}
+td code,th code{background:#eceefb; padding:1px 5px; border-radius:5px; color:#4a3fd6;}
+.kv td:first-child{width:38%; font-weight:600; color:#3a3f57;}   /* key/value table */
+
+/* ---------- accents ---------- */
+.pass{display:inline-block; background:#e8f8ef; color:#0e6b47; border:1px solid #bde7cf;
+  padding:2px 9px; border-radius:999px; font-weight:700; font-size:10px;}
+.tldr{background:linear-gradient(135deg,var(--teal),var(--green)); color:#fff; border-radius:16px;
+  padding:16px 18px; break-inside:avoid;}
+.tldr h3{margin:0 0 6px; font-size:15px;}
+.tldr .term{margin-top:10px; box-shadow:none;}
+.legend{font-size:9.5px; color:var(--muted); margin-top:6px;}
+.foot{margin-top:22px; padding-top:12px; border-top:1px dashed var(--line);
+  color:var(--muted); font-size:9.5px; display:flex; justify-content:space-between;}
